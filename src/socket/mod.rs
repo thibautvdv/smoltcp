@@ -220,11 +220,10 @@ impl Context {
             #[cfg(not(feature = "medium-ethernet"))]
             max_transmission_unit: 1500,
         },
-        #[cfg(all(
-            any(feature = "medium-ethernet", feature = "medium-ieee802154"),
-            feature = "socket-dhcpv4"
-        ))]
-        hardware_addr: None,
+        #[cfg(all(feature = "medium-ethernet", feature = "socket-dhcpv4"))]
+        hardware_addr: Some(crate::wire::HardwareAddress::Ethernet(
+            crate::wire::EthernetAddress([0x02, 0x02, 0x02, 0x02, 0x02, 0x02]),
+        )),
         now: Instant::from_millis_const(0),
 
         #[cfg(feature = "medium-ieee802154")]
