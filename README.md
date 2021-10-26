@@ -25,8 +25,9 @@ To set expectations right, both implemented and omitted features are listed.
 
 ### Media layer
 
-The only supported medium is Ethernet.
+Two mediums are supported by _smoltcp_:
 
+#### Ethernet
   * Regular Ethernet II frames are supported.
   * Unicast, broadcast and multicast packets are supported.
   * ARP packets (including gratuitous requests and replies) are supported.
@@ -34,6 +35,11 @@ The only supported medium is Ethernet.
   * Cached ARP entries expire after one minute.
   * 802.3 frames and 802.1Q are **not** supported.
   * Jumbo frames are **not** supported.
+
+#### IEEE802.15.4
+  * Only support for IEEE802.15.4 data frames (others are dropped).
+  * Frames with PAN ID other than the one set by the user or BROADCAST are dropped.
+  * Basic support for 6LoWPAN_IPHC and 6LoWPAN_NHC (ICMPv6 and UDP tested) [RFC 6282](https://datatracker.ietf.org/doc/html/rfc6282).
 
 ### IP layer
 
@@ -141,57 +147,17 @@ You probably want to disable default features and configure them one by one:
 smoltcp = { version = "0.7.5", default-features = false, features = ["log"] }
 ```
 
-### Feature `std`
-
-The `std` feature enables use of objects and slices owned by the networking stack through a
-dependency on `std::boxed::Box` and `std::vec::Vec`.
-
-This feature is enabled by default.
-
-### Feature `alloc`
-
-The `alloc` feature enables use of objects owned by the networking stack through a dependency
-on collections from the `alloc` crate. This only works on nightly rustc.
-
-This feature is disabled by default.
-
-### Feature `log`
-
-The `log` feature enables logging of events within the networking stack through
-the [log crate][log]. Normal events (e.g. buffer level or TCP state changes) are emitted with
-the TRACE log level. Exceptional events (e.g. malformed packets) are emitted with
-the DEBUG log level.
+| Feature | Default | |
+|---------|:-------:|------|
+|`std`| :heavy_check_mark: | Enables use of objects and slices owned by the networking stack through a dependency on `std::boxed::Box` and `std::vec::Vec`.|
+|`alloc`| :heavy_check_mark: | Enables use of objects owned by the networking stack through a dependency on collections from the `alloc` crate. This only works on nightly rustc.|
+|`log`| :heavy_check_mark: | Enables logging of events within the networking stack through the [log crate][log]. Normal events (e.g. buffer level or TCP state changes) are emitted with the TRACE log level. Exceptional events (e.g. malformed packets) are emitted with the DEBUG log level.|
+|`verbose`| :x: | Enables logging of events where the logging itself may incur very high overhead. For example, emitting a log line every time an application reads or writes as little as 1 octet from a socket is likely to overwhelm the application logic unless a `BufReader` or `BufWriter` is used, which are of course not available on heap-less systems.|
+|`phy-raw_socket`, `phy-tuntap_interface`| :heavy_check_mark: | Enable `smoltcp::phy::RawSocket` and `smoltcp::phy::TunTapInterface` respectively |
+|`socket-raw`, `socket-udp`, `socket-tcp`| :heavy_check_mark: | Enable `smoltcp::socket::RawSocket`, `smoltcp::socket::UdpSocket`, and `smoltcp::socket::TcpSocket`, respectively. |
+|`proto-ipv4`, `proto-ipv6`| :heavy_check_mark: | Enable [IPv4] and [IPv6] respectively. |
 
 [log]: https://crates.io/crates/log
-
-This feature is enabled by default.
-
-### Feature `verbose`
-
-The `verbose` feature enables logging of events where the logging itself may incur very high
-overhead. For example, emitting a log line every time an application reads or writes as little
-as 1 octet from a socket is likely to overwhelm the application logic unless a `BufReader`
-or `BufWriter` is used, which are of course not available on heap-less systems.
-
-This feature is disabled by default.
-
-### Features `phy-raw_socket` and `phy-tuntap_interface`
-
-Enable `smoltcp::phy::RawSocket` and `smoltcp::phy::TunTapInterface`, respectively.
-
-These features are enabled by default.
-
-### Features `socket-raw`, `socket-udp`, and `socket-tcp`
-
-Enable `smoltcp::socket::RawSocket`, `smoltcp::socket::UdpSocket`,
-and `smoltcp::socket::TcpSocket`, respectively.
-
-These features are enabled by default.
-
-### Features `proto-ipv4` and `proto-ipv6`
-
-Enable [IPv4] and [IPv6] respectively.
-
 [IPv4]: https://tools.ietf.org/rfc/rfc791.txt
 [IPv6]: https://tools.ietf.org/rfc/rfc8200.txt
 
