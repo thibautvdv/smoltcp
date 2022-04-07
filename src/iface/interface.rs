@@ -2627,7 +2627,7 @@ impl<'a> InterfaceInner<'a> {
         &mut self,
         tx_token: Tx,
         packet: IpPacket,
-        out_fragments: Option<&mut OutBuffer<'_>>,
+        _out_fragments: Option<&mut OutBuffer<'_>>,
     ) -> Result<()> {
         let ip_repr = packet.ip_repr();
         assert!(!ip_repr.src_addr().is_unspecified());
@@ -2692,7 +2692,7 @@ impl<'a> InterfaceInner<'a> {
                     &ip_repr,
                     tx_token,
                     packet,
-                    out_fragments,
+                    _out_fragments,
                 )
             }
         }
