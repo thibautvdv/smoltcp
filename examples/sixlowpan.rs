@@ -90,7 +90,7 @@ fn main() {
 
     let buffer: Vec<(usize, managed::ManagedSlice<'_, u8>)> = (0..12)
         .into_iter()
-        .map(|_| (0_usize, managed::ManagedSlice::from(vec![0; 127])))
+        .map(|_| (0_usize, managed::ManagedSlice::from(vec![0; 1_000_000_000])))
         .collect();
 
     let out_fragments_cache = RingBuffer::new(buffer);

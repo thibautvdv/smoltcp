@@ -10,6 +10,11 @@ mod wire {
     use smoltcp::wire::{TcpControl, TcpPacket, TcpRepr, TcpSeqNumber};
     use smoltcp::wire::{UdpPacket, UdpRepr};
 
+    use smoltcp::phy::{Medium, RawSocket};
+    use smoltcp::socket::{TcpSocket, TcpSocketBuffer};
+    use smoltcp::storage::RingBuffer;
+    use smoltcp::wire::{Ieee802154Pan, IpCidr};
+    use std::os::unix::io::AsRawFd;
     extern crate test;
 
     #[cfg(feature = "proto-ipv6")]
@@ -114,4 +119,50 @@ mod wire {
             repr.emit(&mut packet);
         });
     }
+    #[bench]
+    fn bench_emit_6lowpan(b: &mut test::Bencher) {
+        let device = RawSocket::new("wpan1", Medium::Ieee802154).unwrap();
+        let fd = device.as_raw_fd();
+
+        let tcp_rx_buffer = TcpSocketBuffer::new(vec![0; 4096]);
+        let tcp_tx_buffer = TcpSocketBuffer::new(vec![0; 4096]);
+        let tcp_socket = TcpSocket::new(tcp_rx_buffer, tcp_tx_buffer);
+
+        let ieee802154_addr = smoltcp::wire::Ieee802154Address::Extended([
+            0x1a, 0x0b, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+        ]);
+        let ip_addrs = [IpCidr::new(
+            IpAddress::v6(0xfe80, 0, 0, 0, 0x180b, 0x4242, 0x4242, 0x4242),
+            64,
+        )];
+
+        let cache = FragmentsCache::new(vec![], BTreeMap::new());
+
+        let buffer: Vec<(usize, managed::ManagedSlice<'_, u8>)> = (0..12)
+            .into_iter()
+            .map(|_| (0_usize, managed::ManagedSlice::from(vec![0; 127])))
+            .collect();
+
+        let out_fragments_cache = RingBuffer::new(buffer);
+
+        let mut builder = InterfaceBuilder::new(device, vec![])
+            .ip_addrs(ip_addrs)
+            .pan_id(Ieee802154Pan(0xbeef));
+        builder = builder
+            .hardware_addr(ieee802154_addr.into())
+            .neighbor_cache(neighbor_cache)
+            .sixlowpan_fragments_cache(cache)
+            .out_fragments_cache(out_fragments_cache);
+        let mut iface = builder.finalize();
+
+        let tcp_handle = iface.add_socket(tcp_socket);
+
+        let socket = iface.get_socket::<TcpSocket>(tcp_handle);
+        socket.listen(50000).unwrap();
+        let mut tcp_active = false;
+        b.iter(|| {
+            
+        });
+    }
+
 }
