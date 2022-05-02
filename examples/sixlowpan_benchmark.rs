@@ -53,28 +53,22 @@ use smoltcp::socket::{TcpSocket, TcpSocketBuffer};
 use smoltcp::storage::RingBuffer;
 use smoltcp::wire::{Ieee802154Pan, IpAddress, IpCidr};
 
-
-
 //For benchmark
 use smoltcp::time::{Duration, Instant};
-use std::thread;
 use std::cmp;
-use std::net::TcpStream;
-use std::net::{SocketAddrV6};
 use std::io::{Read, Write};
+use std::net::SocketAddrV6;
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
-
-
+use std::thread;
 
 use std::fs;
-
 
 fn if_nametoindex(ifname: &str) -> u32 {
     let contents = fs::read_to_string(format!("/sys/devices/virtual/net/{}/ifindex",ifname))
         .expect(format!("Something went wrong trying to get IF-index of lowpan0, does \"/sys/devices/virtual/net/{}/ifindex\" exist?", ifname).as_str())
         .replace("\n", "");
     contents.parse::<u32>().unwrap()
-
 }
 
 const AMOUNT: usize = 100_000_000;
@@ -84,8 +78,7 @@ enum Client {
     Writer,
 }
 
-
-fn client(kind: Client){
+fn client(kind: Client) {
     let port: u16 = match kind {
         Client::Reader => 1234,
         Client::Writer => 1235,
@@ -93,10 +86,14 @@ fn client(kind: Client){
 
     let scope_id = if_nametoindex("lowpan0");
 
-    let socket_addr = SocketAddrV6::new("fe80:0:0:0:180b:4242:4242:4242".parse().unwrap(), port, 0, scope_id);
-    
-    //let socket_addr: SocketAddrV6 = "[fe80:0:0:0:180b:4242:4242:4242]:1234".parse().unwrap();
+    let socket_addr = SocketAddrV6::new(
+        "fe80:0:0:0:180b:4242:4242:4242".parse().unwrap(),
+        port,
+        0,
+        scope_id,
+    );
 
+    //let socket_addr: SocketAddrV6 = "[fe80:0:0:0:180b:4242:4242:4242]:1234".parse().unwrap();
 
     let mut stream = TcpStream::connect(socket_addr).expect("failed to connect TLKAGMKA");
     let mut buffer = vec![0; 1_000_000];
@@ -129,10 +126,9 @@ fn client(kind: Client){
     CLIENT_DONE.store(true, Ordering::SeqCst);
 }
 
-
 static CLIENT_DONE: AtomicBool = AtomicBool::new(false);
 
-fn main(){
+fn main() {
     #[cfg(feature = "log")]
     utils::setup_logging("info");
 
@@ -140,14 +136,12 @@ fn main(){
     utils::add_middleware_options(&mut opts, &mut free);
     free.push("MODE");
 
-
     let mut matches = utils::parse_options(&opts, free);
 
     let device = RawSocket::new("wpan1", Medium::Ieee802154).unwrap();
 
     let fd = device.as_raw_fd();
     let device = utils::parse_middleware_options(&mut matches, device, /*loopback=*/ false);
-
 
     let mode = match matches.free[0].as_ref() {
         "reader" => Client::Reader,
@@ -195,10 +189,7 @@ fn main(){
     let tcp1_handle = iface.add_socket(tcp1_socket);
     let tcp2_handle = iface.add_socket(tcp2_socket);
 
-
-
     let default_timeout = Some(Duration::from_millis(1000));
-    
 
     thread::spawn(move || client(mode));
     let mut processed = 0;

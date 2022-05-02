@@ -81,8 +81,6 @@ fn main() {
         _ => panic!("invalid mode"),
     };
 
-    
-
     let neighbor_cache = NeighborCache::new(BTreeMap::new());
 
     let tcp1_rx_buffer = TcpSocketBuffer::new(vec![0; 65535]);
