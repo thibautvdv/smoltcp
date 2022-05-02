@@ -209,16 +209,14 @@ fn main() {
             socket.listen(1234).unwrap();
         }
 
-        if socket.can_send() {
-            if processed < AMOUNT {
-                let length = socket
-                    .send(|buffer| {
-                        let length = cmp::min(buffer.len(), AMOUNT - processed);
-                        (length, length)
-                    })
-                    .unwrap();
-                processed += length;
-            }
+        if socket.can_send() && processed < AMOUNT {
+            let length = socket
+                .send(|buffer| {
+                    let length = cmp::min(buffer.len(), AMOUNT - processed);
+                    (length, length)
+                })
+                .unwrap();
+            processed += length;
         }
 
         // tcp:1235: sink data
@@ -227,16 +225,14 @@ fn main() {
             socket.listen(1235).unwrap();
         }
 
-        if socket.can_recv() {
-            if processed < AMOUNT {
-                let length = socket
-                    .recv(|buffer| {
-                        let length = cmp::min(buffer.len(), AMOUNT - processed);
-                        (length, length)
-                    })
-                    .unwrap();
-                processed += length;
-            }
+        if socket.can_recv() && processed < AMOUNT {
+            let length = socket
+                .recv(|buffer| {
+                    let length = cmp::min(buffer.len(), AMOUNT - processed);
+                    (length, length)
+                })
+                .unwrap();
+            processed += length;
         }
 
         match iface.poll_at(timestamp) {
