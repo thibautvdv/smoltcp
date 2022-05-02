@@ -1,6 +1,7 @@
 //! 6lowpan benchmark exmaple
 //!
-//! This example is designed to run using the Linux ieee802154/6lowpan support,
+//! This example runs a simple TCP throughput benchmark using the 6lowpan implementation in smoltcp
+//! It is designed to run using the Linux ieee802154/6lowpan support,
 //! using mac802154_hwsim.
 //!
 //! mac802154_hwsim allows you to create multiple "virtual" radios and specify
@@ -11,9 +12,13 @@
 //!
 //! We'll configure Linux to speak 6lowpan on `wpan0`, and leave `wpan1`
 //! unconfigured so smoltcp can use it with a raw socket.
+//! 
+//! 
+//! 
+//! 
 //!
 //! # Setup
-//!
+//!    
 //!     modprobe mac802154_hwsim
 //!
 //!     ip link set wpan0 down
@@ -25,15 +30,11 @@
 //!     ip link set wpan1 up
 //!     ip link set lowpan0 up
 //!
+//!
 //! # Running
 //!
-//! Run it with `sudo ./target/debug/examples/sixlowpan`.
-//!
-//! You can set wireshark to sniff on interface `wpan0` to see the packets.
-//!
-//! Ping it with `ping fe80::180b:4242:4242:4242%lowpan0`.
-//!
-//! Speak UDP with `nc -uv fe80::180b:4242:4242:4242%lowpan0 6969`.
+//! Compile with `cargo build --release --example sixlowpan_benchmark`
+//! Run it with `sudo ./target/release/examples/sixlowpan_benchmark [reader|writer]`.
 //!
 //! # Teardown
 //!
@@ -66,7 +67,7 @@ use std::fs;
 
 fn if_nametoindex(ifname: &str) -> u32 {
     let contents = fs::read_to_string(format!("/sys/devices/virtual/net/{}/ifindex", ifname))
-        .expect("couldn't read interface from \"/sys/devices/virtual/net")
+        .expect("couldn't read interface from \"/sys/devices/virtual/net\"")
         .replace("\n", "");
     contents.parse::<u32>().unwrap()
 }
