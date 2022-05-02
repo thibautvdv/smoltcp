@@ -65,8 +65,8 @@ use std::thread;
 use std::fs;
 
 fn if_nametoindex(ifname: &str) -> u32 {
-    let contents = fs::read_to_string(format!("/sys/devices/virtual/net/{}/ifindex",ifname))
-        .expect(format!("Something went wrong trying to get IF-index of lowpan0, does \"/sys/devices/virtual/net/{}/ifindex\" exist?", ifname).as_str())
+    let contents = fs::read_to_string(format!("/sys/devices/virtual/net/{}/ifindex", ifname))
+        .expect("couldn't read interface from \"/sys/devices/virtual/net")
         .replace("\n", "");
     contents.parse::<u32>().unwrap()
 }
