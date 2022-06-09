@@ -25,6 +25,7 @@ bitflags = { version = "1.0", default-features = false }
 defmt = { version = "0.3", optional = true }
 cfg-if = "1.0.0"
 heapless = "0.7.8"
+#rtt-target = { version = "0.3.1", features = ["cortex-m"] }
 
 [dev-dependencies]
 env_logger = "0.9"
@@ -50,6 +51,7 @@ defmt = [ "dep:defmt", "heapless/defmt", "heapless/defmt-impl" ]
 "proto-dhcpv4" = ["proto-ipv4"]
 "proto-ipv6" = []
 "proto-sixlowpan" = ["proto-ipv6"]
+"proto-rpl" = []
 "proto-sixlowpan-fragmentation" = ["proto-sixlowpan"]
 "proto-dns" = []
 
@@ -70,6 +72,7 @@ default = [
   "phy-raw_socket", "phy-tuntap_interface",
   "proto-ipv4", "proto-igmp", "proto-dhcpv4", "proto-ipv6", "proto-dns",
   "proto-ipv4-fragmentation", "proto-sixlowpan-fragmentation",
+  "proto-rpl",
   "socket-raw", "socket-icmp", "socket-udp", "socket-tcp", "socket-dhcpv4", "socket-dns", "socket-mdns",
   "async"
 ]

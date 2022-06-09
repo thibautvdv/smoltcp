@@ -1535,9 +1535,13 @@ pub mod nhc {
         /// [check_len]: #method.check_len
         pub fn new_checked(buffer: T) -> Result<Self> {
             let packet = Self::new_unchecked(buffer);
+
+            // Check if basic accessors will work.
             packet.check_len()?;
 
-            if packet.eid_field() > 7 {
+            // Check if we have the correct dispatch value.
+            // Check that the EID field has a valid value.
+            if packet.dispatch_field() != DISPATCH_EXT_HEADER || packet.eid_field() > 7 {
                 return Err(Error);
             }
 
@@ -1586,6 +1590,10 @@ pub mod nhc {
             }
         }
 
+        pub fn length(&self) -> u8 {
+            self.buffer.as_ref()[1]
+        }
+
         /// Parse the next header field.
         pub fn next_header(&self) -> NextHeader {
             if self.nh_field() == 1 {
@@ -1618,6 +1626,7 @@ pub mod nhc {
     impl<'a, T: AsRef<[u8]> + ?Sized> ExtHeaderPacket<&'a T> {
         /// Return a pointer to the payload.
         pub fn payload(&self) -> &'a [u8] {
+            // TODO(thvdveld): CHECK HOW THIS SHOULD BE CALCULATED
             let start = 2 + self.next_header_size();
             &self.buffer.as_ref()[start..]
         }
@@ -1681,9 +1690,9 @@ pub mod nhc {
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ExtHeaderRepr {
-        ext_header_id: ExtHeaderId,
-        next_header: NextHeader,
-        length: u8,
+        pub ext_header_id: ExtHeaderId,
+        pub next_header: NextHeader,
+        pub length: u8,
     }
 
     impl ExtHeaderRepr {
@@ -1699,7 +1708,7 @@ pub mod nhc {
             Ok(Self {
                 ext_header_id: packet.extension_header_id(),
                 next_header: packet.next_header(),
-                length: packet.payload().len() as u8,
+                length: packet.length(),
             })
         }
 

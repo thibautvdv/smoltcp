@@ -187,7 +187,7 @@ fn test_no_icmp_no_unicast_ipv6() {
     // Ensure that the unknown protocol frame does not trigger an
     // ICMP error response when the destination address is a
     // broadcast address
-    assert_eq!(iface.inner.process_ipv6(&mut sockets, &frame), None);
+    assert_eq!(iface.inner.process_ipv6(&mut sockets, None, &frame), None);
 }
 
 #[test]
@@ -1090,7 +1090,7 @@ fn test_icmpv6_nxthdr_unknown() {
     // Ensure the unknown next header causes a ICMPv6 Parameter Problem
     // error message to be sent to the sender.
     assert_eq!(
-        iface.inner.process_ipv6(&mut sockets, &frame),
+        iface.inner.process_ipv6(&mut sockets, None, &frame),
         Some(IpPacket::Icmpv6((reply_ipv6_repr, reply_icmp_repr)))
     );
 }

@@ -1,6 +1,9 @@
 use super::{Error, Result};
 use core::fmt;
 
+#[cfg(feature = "proto-rpl")]
+use super::RplDataPacket;
+
 enum_with_unknown! {
     /// IPv6 Extension Header Option Type
     pub enum Type(u8) {

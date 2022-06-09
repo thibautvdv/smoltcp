@@ -99,7 +99,7 @@ pub(crate) mod ip;
 #[cfg(feature = "proto-ipv4")]
 mod ipv4;
 #[cfg(feature = "proto-ipv6")]
-mod ipv6;
+pub(crate) mod ipv6;
 #[cfg(feature = "proto-ipv6")]
 mod ipv6fragment;
 #[cfg(feature = "proto-ipv6")]
@@ -120,6 +120,8 @@ mod ndisc;
     any(feature = "medium-ethernet", feature = "medium-ieee802154")
 ))]
 mod ndiscoption;
+#[cfg(feature = "proto-rpl")]
+pub(crate) mod rpl;
 #[cfg(all(feature = "proto-sixlowpan", feature = "medium-ieee802154"))]
 mod sixlowpan;
 mod tcp;
@@ -221,6 +223,12 @@ pub use self::icmp::Repr as IcmpRepr;
 ))]
 pub use self::ndisc::{
     NeighborFlags as NdiscNeighborFlags, Repr as NdiscRepr, RouterFlags as NdiscRouterFlags,
+};
+
+#[cfg(feature = "proto-rpl")]
+pub use self::rpl::{
+    data::Packet as RplDataPacket, options::Packet as RplOptionPacket,
+    options::Repr as RplOptionRepr, InstanceId as RplInstanceId, Repr as RplRepr,
 };
 
 #[cfg(all(

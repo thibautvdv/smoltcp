@@ -15,6 +15,7 @@ impl<'a> InterfaceInner<'a> {
     pub(super) fn process_ipv6<'frame, T: AsRef<[u8]> + ?Sized>(
         &mut self,
         sockets: &mut SocketSet,
+        ll_addr: Option<HardwareAddress>,
         ipv6_packet: &Ipv6Packet<&'frame T>,
     ) -> Option<IpPacket<'frame>> {
         let ipv6_repr = check!(Ipv6Repr::parse(ipv6_packet));
@@ -34,6 +35,7 @@ impl<'a> InterfaceInner<'a> {
 
         self.process_nxt_hdr(
             sockets,
+            ll_addr,
             ipv6_repr,
             ipv6_repr.next_header,
             handled_by_raw_socket,
@@ -47,13 +49,16 @@ impl<'a> InterfaceInner<'a> {
     pub(super) fn process_nxt_hdr<'frame>(
         &mut self,
         sockets: &mut SocketSet,
+        ll_addr: Option<HardwareAddress>,
         ipv6_repr: Ipv6Repr,
         nxt_hdr: IpProtocol,
         handled_by_raw_socket: bool,
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
         match nxt_hdr {
-            IpProtocol::Icmpv6 => self.process_icmpv6(sockets, ipv6_repr.into(), ip_payload),
+            IpProtocol::Icmpv6 => {
+                self.process_icmpv6(sockets, ll_addr, ipv6_repr.into(), ip_payload)
+            }
 
             #[cfg(any(feature = "socket-udp", feature = "socket-dns"))]
             IpProtocol::Udp => {
@@ -78,9 +83,13 @@ impl<'a> InterfaceInner<'a> {
             #[cfg(feature = "socket-tcp")]
             IpProtocol::Tcp => self.process_tcp(sockets, ipv6_repr.into(), ip_payload),
 
-            IpProtocol::HopByHop => {
-                self.process_hopbyhop(sockets, ipv6_repr, handled_by_raw_socket, ip_payload)
-            }
+            IpProtocol::HopByHop => self.process_hopbyhop(
+                sockets,
+                ll_addr,
+                ipv6_repr,
+                handled_by_raw_socket,
+                ip_payload,
+            ),
 
             #[cfg(feature = "socket-raw")]
             _ if handled_by_raw_socket => None,
@@ -105,6 +114,7 @@ impl<'a> InterfaceInner<'a> {
     pub(super) fn process_icmpv6<'frame>(
         &mut self,
         _sockets: &mut SocketSet,
+        ll_addr: Option<HardwareAddress>,
         ip_repr: IpRepr,
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
@@ -124,8 +134,8 @@ impl<'a> InterfaceInner<'a> {
             .items_mut()
             .filter_map(|i| icmp::Socket::downcast_mut(&mut i.socket))
         {
-            if icmp_socket.accepts(self, &ip_repr, &icmp_repr.into()) {
-                icmp_socket.process(self, &ip_repr, &icmp_repr.into());
+            if icmp_socket.accepts(self, &ip_repr, &icmp_repr.clone().into()) {
+                icmp_socket.process(self, &ip_repr, &icmp_repr.clone().into());
                 handled_by_icmp_socket = true;
             }
         }
@@ -164,6 +174,13 @@ impl<'a> InterfaceInner<'a> {
             // has been handled by an ICMP socket
             #[cfg(feature = "socket-icmp")]
             _ if handled_by_icmp_socket => None,
+
+            #[cfg(feature = "proto-rpl")]
+            Icmpv6Repr::Rpl(rpl) => match ip_repr {
+                IpRepr::Ipv6(ipv6_repr) => self.process_rpl(ll_addr.unwrap(), ipv6_repr, rpl),
+                #[allow(unreachable_patterns)]
+                _ => unreachable!(),
+            },
 
             // FIXME: do something correct here?
             _ => None,
@@ -251,6 +268,7 @@ impl<'a> InterfaceInner<'a> {
     pub(super) fn process_hopbyhop<'frame>(
         &mut self,
         sockets: &mut SocketSet,
+        ll_addr: Option<HardwareAddress>,
         ipv6_repr: Ipv6Repr,
         handled_by_raw_socket: bool,
         ip_payload: &'frame [u8],
@@ -280,6 +298,7 @@ impl<'a> InterfaceInner<'a> {
 
         self.process_nxt_hdr(
             sockets,
+            ll_addr,
             ipv6_repr,
             hbh_repr.next_header.unwrap(),
             handled_by_raw_socket,

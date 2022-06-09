@@ -35,36 +35,35 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Return the current hop limit field.
     #[inline]
     pub fn current_hop_limit(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        data[field::CUR_HOP_LIMIT]
+        self.buffer.as_ref()[field::CUR_HOP_LIMIT]
     }
 
     /// Return the Router Advertisement flags.
     #[inline]
     pub fn router_flags(&self) -> RouterFlags {
-        let data = self.buffer.as_ref();
-        RouterFlags::from_bits_truncate(data[field::ROUTER_FLAGS])
+        RouterFlags::from_bits_truncate(self.buffer.as_ref()[field::ROUTER_FLAGS])
     }
 
     /// Return the router lifetime field.
     #[inline]
     pub fn router_lifetime(&self) -> Duration {
-        let data = self.buffer.as_ref();
-        Duration::from_secs(NetworkEndian::read_u16(&data[field::ROUTER_LT]) as u64)
+        Duration::from_secs(NetworkEndian::read_u16(&self.buffer.as_ref()[field::ROUTER_LT]) as u64)
     }
 
     /// Return the reachable time field.
     #[inline]
     pub fn reachable_time(&self) -> Duration {
-        let data = self.buffer.as_ref();
-        Duration::from_millis(NetworkEndian::read_u32(&data[field::REACHABLE_TM]) as u64)
+        Duration::from_millis(
+            NetworkEndian::read_u32(&self.buffer.as_ref()[field::REACHABLE_TM]) as u64,
+        )
     }
 
     /// Return the retransmit time field.
     #[inline]
     pub fn retrans_time(&self) -> Duration {
-        let data = self.buffer.as_ref();
-        Duration::from_millis(NetworkEndian::read_u32(&data[field::RETRANS_TM]) as u64)
+        Duration::from_millis(
+            NetworkEndian::read_u32(&self.buffer.as_ref()[field::RETRANS_TM]) as u64,
+        )
     }
 }
 
@@ -78,8 +77,7 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Return the target address field.
     #[inline]
     pub fn target_addr(&self) -> Ipv6Address {
-        let data = self.buffer.as_ref();
-        Ipv6Address::from_bytes(&data[field::TARGET_ADDR])
+        Ipv6Address::from_bytes(&self.buffer.as_ref()[field::TARGET_ADDR])
     }
 }
 
@@ -91,8 +89,7 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Return the Neighbor Solicitation flags.
     #[inline]
     pub fn neighbor_flags(&self) -> NeighborFlags {
-        let data = self.buffer.as_ref();
-        NeighborFlags::from_bits_truncate(data[field::NEIGH_FLAGS])
+        NeighborFlags::from_bits_truncate(self.buffer.as_ref()[field::NEIGH_FLAGS])
     }
 }
 
@@ -104,8 +101,7 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Return the destination address field.
     #[inline]
     pub fn dest_addr(&self) -> Ipv6Address {
-        let data = self.buffer.as_ref();
-        Ipv6Address::from_bytes(&data[field::DEST_ADDR])
+        Ipv6Address::from_bytes(&self.buffer.as_ref()[field::DEST_ADDR])
     }
 }
 
@@ -117,8 +113,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the current hop limit field.
     #[inline]
     pub fn set_current_hop_limit(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
-        data[field::CUR_HOP_LIMIT] = value;
+        self.buffer.as_mut()[field::CUR_HOP_LIMIT] = value;
     }
 
     /// Set the Router Advertisement flags.
@@ -130,22 +125,28 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the router lifetime field.
     #[inline]
     pub fn set_router_lifetime(&mut self, value: Duration) {
-        let data = self.buffer.as_mut();
-        NetworkEndian::write_u16(&mut data[field::ROUTER_LT], value.secs() as u16);
+        NetworkEndian::write_u16(
+            &mut self.buffer.as_mut()[field::ROUTER_LT],
+            value.secs() as u16,
+        );
     }
 
     /// Set the reachable time field.
     #[inline]
     pub fn set_reachable_time(&mut self, value: Duration) {
-        let data = self.buffer.as_mut();
-        NetworkEndian::write_u32(&mut data[field::REACHABLE_TM], value.total_millis() as u32);
+        NetworkEndian::write_u32(
+            &mut self.buffer.as_mut()[field::REACHABLE_TM],
+            value.total_millis() as u32,
+        );
     }
 
     /// Set the retransmit time field.
     #[inline]
     pub fn set_retrans_time(&mut self, value: Duration) {
-        let data = self.buffer.as_mut();
-        NetworkEndian::write_u32(&mut data[field::RETRANS_TM], value.total_millis() as u32);
+        NetworkEndian::write_u32(
+            &mut self.buffer.as_mut()[field::RETRANS_TM],
+            value.total_millis() as u32,
+        );
     }
 }
 
@@ -159,8 +160,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the target address field.
     #[inline]
     pub fn set_target_addr(&mut self, value: Ipv6Address) {
-        let data = self.buffer.as_mut();
-        data[field::TARGET_ADDR].copy_from_slice(value.as_bytes());
+        self.buffer.as_mut()[field::TARGET_ADDR].copy_from_slice(value.as_bytes());
     }
 }
 
@@ -184,8 +184,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the destination address field.
     #[inline]
     pub fn set_dest_addr(&mut self, value: Ipv6Address) {
-        let data = self.buffer.as_mut();
-        data[field::DEST_ADDR].copy_from_slice(value.as_bytes());
+        self.buffer.as_mut()[field::DEST_ADDR].copy_from_slice(value.as_bytes());
     }
 }
 
@@ -226,10 +225,7 @@ pub enum Repr<'a> {
 impl<'a> Repr<'a> {
     /// Parse an NDISC packet and return a high-level representation of the
     /// packet.
-    pub fn parse<T>(packet: &Packet<&'a T>) -> Result<Repr<'a>>
-    where
-        T: AsRef<[u8]> + ?Sized,
-    {
+    pub fn parse<T: AsRef<[u8]> + ?Sized>(packet: &Packet<&'a T>) -> Result<Repr<'a>> {
         match packet.msg_type() {
             Message::RouterSolicit => {
                 let lladdr = if !packet.payload().is_empty() {
@@ -403,10 +399,7 @@ impl<'a> Repr<'a> {
         }
     }
 
-    pub fn emit<T>(&self, packet: &mut Packet<&mut T>)
-    where
-        T: AsRef<[u8]> + AsMut<[u8]> + ?Sized,
-    {
+    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]> + ?Sized>(&self, packet: &mut Packet<&'a mut T>) {
         match *self {
             Repr::RouterSolicit { lladdr } => {
                 packet.set_msg_type(Message::RouterSolicit);

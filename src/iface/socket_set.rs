@@ -27,7 +27,7 @@ pub(crate) struct Item<'a> {
 /// A handle, identifying a socket in an Interface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct SocketHandle(usize);
+pub struct SocketHandle(pub usize);
 
 impl fmt::Display for SocketHandle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -2,12 +2,12 @@
 #![allow(unused)]
 
 #[derive(Debug)]
-pub(crate) struct Rand {
+pub struct Rand {
     state: u64,
 }
 
 impl Rand {
-    pub(crate) const fn new(seed: u64) -> Self {
+    pub const fn new(seed: u64) -> Self {
         Self { state: seed }
     }
 

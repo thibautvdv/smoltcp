@@ -52,6 +52,14 @@ impl Address {
         0x02,
     ]);
 
+    /// The link-local [all RPL nodes multicast address].
+    ///
+    /// [all RPL nodes multicast address]: https://www.rfc-editor.org/rfc/rfc6550.html#section-20.19
+    pub const LINK_LOCAL_ALL_RPL_NODES: Address = Address([
+        0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x1a,
+    ]);
+
     /// The [loopback address].
     ///
     /// [loopback address]: https://tools.ietf.org/html/rfc4291#section-2.5.3
@@ -676,7 +684,7 @@ impl Repr {
     }
 
     /// Emit a high-level representation into an Internet Protocol version 6 packet.
-    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(&self, packet: &mut Packet<T>) {
+    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]> + ?Sized>(&self, packet: &mut Packet<&mut T>) {
         // Make no assumptions about the original state of the packet buffer.
         // Make sure to set every byte.
         packet.set_version(6);

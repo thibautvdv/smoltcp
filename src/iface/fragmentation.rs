@@ -427,6 +427,10 @@ impl<'a, K: Eq + Ord + Clone + Copy> PacketAssemblerSet<'a, K> {
     where
         F: Fn(&mut PacketAssembler<'_>) -> Result<bool>,
     {
+        if self.index_buffer.is_empty() {
+            return Ok(());
+        }
+
         self.mark_discarded_when(f)?;
         self.remove_discarded();
 

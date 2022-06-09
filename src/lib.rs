@@ -1,5 +1,6 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![deny(unsafe_code)]
+#![allow(unused)]
 
 //! The _smoltcp_ library is built in a layered structure, with the layers corresponding
 //! to the levels of API abstraction. Only the highest layers would be used by a typical
@@ -128,7 +129,7 @@ use core::fmt;
 #[macro_use]
 mod macros;
 mod parsers;
-mod rand;
+pub mod rand;
 
 #[cfg(any(
     feature = "medium-ethernet",

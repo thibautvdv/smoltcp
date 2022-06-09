@@ -145,8 +145,8 @@ mod field {
 /// Core getter methods relevant to any routing type.
 impl<T: AsRef<[u8]>> Header<T> {
     /// Create a raw octet buffer with an IPv6 Routing Header structure.
-    pub const fn new_unchecked(buffer: T) -> Header<T> {
-        Header {
+    pub const fn new_unchecked(buffer: T) -> Self {
+        Self {
             buffer,
             format: PacketFormat::Normal,
         }
@@ -226,6 +226,7 @@ impl<T: AsRef<[u8]>> Header<T> {
         self.buffer
     }
 
+    // TODO(thvdveld): change to `Option<Protocol>` for handling compressed versions.
     /// Return the next header field.
     /// The Next Header field is `None` for compressed headers.
     #[inline]
@@ -237,6 +238,7 @@ impl<T: AsRef<[u8]>> Header<T> {
         }
     }
 
+    // TODO(thvdveld): change to `Option<u8>` for handling compressed versions.
     /// Return the header length field. Length of the Routing header in 8-octet units,
     /// not including the first 8 octets.
     /// The header length field is `None` for compressed headers.

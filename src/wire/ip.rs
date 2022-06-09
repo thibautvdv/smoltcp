@@ -676,9 +676,9 @@ impl Repr {
     }
 
     /// Emit this high-level representation into a buffer.
-    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(
+    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]> + ?Sized>(
         &self,
-        buffer: T,
+        buffer: &mut T,
         _checksum_caps: &ChecksumCapabilities,
     ) {
         match *self {
