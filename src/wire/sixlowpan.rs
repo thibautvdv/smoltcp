@@ -2124,7 +2124,9 @@ pub mod nhc {
 #[cfg(test)]
 mod test {
     use crate::wire::sixlowpan::nhc::ExtHeaderId;
-    use crate::wire::{Ipv6RoutingHeader, Ipv6RoutingRepr, Ipv6RoutingType};
+    use crate::wire::{
+        Ipv6Option, Ipv6OptionType, Ipv6RoutingHeader, Ipv6RoutingRepr, Ipv6RoutingType,
+    };
 
     use super::*;
 
@@ -2378,39 +2380,25 @@ mod test {
     }
 
     #[test]
-    fn sixlowpan_extension_header_routing_header() {
-        let data = [
-            0xe3, 0x16, 0x03, 0x02, 0x99, 0x20, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x00,
-            0x04, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x00,
-        ];
+    fn sixlowpan_extension_header_hop_by_hop_options() {
+        let data = [0xe0, 0x3a, 0x06, 0x63, 0x04, 0x00, 0x1e, 0x04, 0x00];
 
         let ext_header_packet = nhc::ExtHeaderPacket::new_checked(&data).unwrap();
 
         assert_eq!(ext_header_packet.dispatch_field(), DISPATCH_EXT_HEADER);
-        assert_eq!(ext_header_packet.next_header(), NextHeader::Compressed);
+        assert_eq!(
+            ext_header_packet.next_header(),
+            NextHeader::Uncompressed(IpProtocol::Icmpv6)
+        );
         assert_eq!(
             ext_header_packet.extension_header_id(),
-            ExtHeaderId::RoutingHeader
+            ExtHeaderId::HopByHopHeader
         );
 
-        let routing_header =
-            Ipv6RoutingHeader::new_checked_compressed(ext_header_packet.payload(), 2).unwrap();
+        let options_packet = Ipv6Option::new_checked(ext_header_packet.payload()).unwrap();
 
-        assert_eq!(routing_header.next_header(), None);
-        assert_eq!(routing_header.header_len(), None);
-        assert_eq!(routing_header.routing_type(), Ipv6RoutingType::Rpl);
-        assert_eq!(routing_header.segments_left(), 2);
-        assert_eq!(routing_header.cmpr_i(), 9);
-        assert_eq!(routing_header.cmpr_e(), 9);
-        assert_eq!(routing_header.pad(), 2);
-
-        // TODO(thvdveld): fix address function. This uses the length field, which is for Extension
-        // Headers not in the payload.
-        assert_eq!(
-            routing_header.addresses(),
-            &[0x04, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x09]
-        );
-
-        _ = Ipv6RoutingRepr::parse(&routing_header).unwrap();
+        assert_eq!(options_packet.option_type(), Ipv6OptionType::Rpl);
+        assert_eq!(options_packet.data_len(), 4);
+        assert_eq!(options_packet.data(), &[0x00, 0x1e, 0x04, 0x00]);
     }
 }

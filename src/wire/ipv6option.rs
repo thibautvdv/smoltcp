@@ -7,7 +7,9 @@ enum_with_unknown! {
         /// 1 byte of padding
         Pad1 =  0,
         /// Multiple bytes of padding
-        PadN =  1
+        PadN =  1,
+        /// RPL Option
+        Rpl  =  0x63,
     }
 }
 
@@ -16,6 +18,7 @@ impl fmt::Display for Type {
         match *self {
             Type::Pad1 => write!(f, "Pad1"),
             Type::PadN => write!(f, "PadN"),
+            Type::Rpl => write!(f, "RPL"),
             Type::Unknown(id) => write!(f, "{}", id),
         }
     }
@@ -220,6 +223,7 @@ impl<'a, T: AsRef<[u8]> + ?Sized> fmt::Display for Ipv6Option<&'a T> {
 pub enum Repr<'a> {
     Pad1,
     PadN(u8),
+    RplOption(&'a [u8]),
     Unknown {
         type_: Type,
         length: u8,
@@ -236,6 +240,7 @@ impl<'a> Repr<'a> {
         match opt.option_type() {
             Type::Pad1 => Ok(Repr::Pad1),
             Type::PadN => Ok(Repr::PadN(opt.data_len())),
+            Type::Rpl => Ok(Repr::RplOption(opt.data())),
             unknown_type @ Type::Unknown(_) => Ok(Repr::Unknown {
                 type_: unknown_type,
                 length: opt.data_len(),
@@ -249,6 +254,8 @@ impl<'a> Repr<'a> {
         match *self {
             Repr::Pad1 => 1,
             Repr::PadN(length) => field::DATA(length).end,
+            Repr::RplOption(_) => field::DATA(4).end, // TODO(thvdveld): check that this is
+            // correct.
             Repr::Unknown { length, .. } => field::DATA(length).end,
         }
     }
@@ -264,6 +271,10 @@ impl<'a> Repr<'a> {
                 for x in opt.data_mut().iter_mut() {
                     *x = 0
                 }
+            }
+            Repr::RplOption(_) => {
+                opt.set_option_type(Type::Rpl);
+                opt.set_data_len(4);
             }
             Repr::Unknown {
                 type_,
@@ -344,6 +355,7 @@ impl<'a> fmt::Display for Repr<'a> {
         match *self {
             Repr::Pad1 => write!(f, "{} ", Type::Pad1),
             Repr::PadN(len) => write!(f, "{} length={} ", Type::PadN, len),
+            Repr::RplOption(_) => write!(f, "{}", Type::Rpl),
             Repr::Unknown { type_, length, .. } => write!(f, "{} length={} ", type_, length),
         }
     }
