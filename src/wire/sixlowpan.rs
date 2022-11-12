@@ -499,7 +499,7 @@ pub mod iphc {
 
     macro_rules! get_field {
         ($name:ident, $mask:expr, $shift:expr) => {
-            fn $name(&self) -> u8 {
+            pub(crate) fn $name(&self) -> u8 {
                 let data = self.buffer.as_ref();
                 let raw = NetworkEndian::read_u16(&data[field::IPHC_FIELD]);
                 ((raw >> $shift) & $mask) as u8
@@ -509,7 +509,7 @@ pub mod iphc {
 
     macro_rules! set_field {
         ($name:ident, $mask:expr, $shift:expr) => {
-            fn $name(&mut self, val: u8) {
+            pub(crate) fn $name(&mut self, val: u8) {
                 let data = &mut self.buffer.as_mut()[field::IPHC_FIELD];
                 let mut raw = NetworkEndian::read_u16(data);
 
@@ -1423,7 +1423,7 @@ pub mod nhc {
 
     macro_rules! get_field {
         ($name:ident, $mask:expr, $shift:expr) => {
-            fn $name(&self) -> u8 {
+            pub(crate) fn $name(&self) -> u8 {
                 let data = self.buffer.as_ref();
                 let raw = &data[0];
                 ((raw >> $shift) & $mask) as u8
@@ -1433,7 +1433,7 @@ pub mod nhc {
 
     macro_rules! set_field {
         ($name:ident, $mask:expr, $shift:expr) => {
-            fn $name(&mut self, val: u8) {
+            pub(crate) fn $name(&mut self, val: u8) {
                 let data = self.buffer.as_mut();
                 let mut raw = data[0];
                 raw = (raw & !($mask << $shift)) | (val << $shift);
@@ -1614,7 +1614,7 @@ pub mod nhc {
     impl<'a, T: AsRef<[u8]> + ?Sized> ExtHeaderPacket<&'a T> {
         /// Return a pointer to the payload.
         pub fn payload(&self) -> &'a [u8] {
-            let start = 1 + self.next_header_size();
+            let start = 2 + self.next_header_size();
             &self.buffer.as_ref()[start..]
         }
     }
@@ -2066,18 +2066,6 @@ pub mod nhc {
         use super::*;
 
         #[test]
-        fn ext_header_nhc_fields() {
-            let bytes = [0xe3, 0x06, 0x03, 0x00, 0xff, 0x00, 0x00, 0x00];
-
-            let packet = ExtHeaderPacket::new_checked(&bytes[..]).unwrap();
-            assert_eq!(packet.next_header_size(), 0);
-            assert_eq!(packet.dispatch_field(), DISPATCH_EXT_HEADER);
-            assert_eq!(packet.extension_header_id(), ExtHeaderId::RoutingHeader);
-
-            assert_eq!(packet.payload(), [0x06, 0x03, 0x00, 0xff, 0x00, 0x00, 0x00]);
-        }
-
-        #[test]
         fn ext_header_emit() {
             let ext_header = ExtHeaderRepr {
                 ext_header_id: ExtHeaderId::RoutingHeader,
@@ -2135,6 +2123,9 @@ pub mod nhc {
 
 #[cfg(test)]
 mod test {
+    use crate::wire::sixlowpan::nhc::ExtHeaderId;
+    use crate::wire::{Ipv6RoutingHeader, Ipv6RoutingRepr, Ipv6RoutingType};
+
     use super::*;
 
     #[test]
@@ -2350,5 +2341,76 @@ mod test {
         assert_eq!(udp_repr.src_port, 53855);
         assert_eq!(udp_repr.dst_port, 6969);
         assert_eq!(udp_hdr.checksum(), Some(0xb46b));
+    }
+
+    #[test]
+    fn sixlowpan_extension_header_routing_header() {
+        let data = [
+            0xe3, 0x16, 0x03, 0x02, 0x99, 0x20, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x00,
+            0x04, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x00,
+        ];
+
+        let ext_header_packet = nhc::ExtHeaderPacket::new_checked(&data).unwrap();
+
+        assert_eq!(ext_header_packet.dispatch_field(), DISPATCH_EXT_HEADER);
+        assert_eq!(ext_header_packet.next_header(), NextHeader::Compressed);
+        assert_eq!(
+            ext_header_packet.extension_header_id(),
+            ExtHeaderId::RoutingHeader
+        );
+
+        let routing_header =
+            Ipv6RoutingHeader::new_checked_compressed(ext_header_packet.payload(), 2).unwrap();
+
+        assert_eq!(routing_header.next_header(), None);
+        assert_eq!(routing_header.header_len(), None);
+        assert_eq!(routing_header.routing_type(), Ipv6RoutingType::Rpl);
+        assert_eq!(routing_header.segments_left(), 2);
+        assert_eq!(routing_header.cmpr_i(), 9);
+        assert_eq!(routing_header.cmpr_e(), 9);
+        assert_eq!(routing_header.pad(), 2);
+        assert_eq!(
+            routing_header.addresses(),
+            &[0x04, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x09]
+        );
+
+        _ = Ipv6RoutingRepr::parse(&routing_header).unwrap();
+    }
+
+    #[test]
+    fn sixlowpan_extension_header_routing_header() {
+        let data = [
+            0xe3, 0x16, 0x03, 0x02, 0x99, 0x20, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x00,
+            0x04, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x00,
+        ];
+
+        let ext_header_packet = nhc::ExtHeaderPacket::new_checked(&data).unwrap();
+
+        assert_eq!(ext_header_packet.dispatch_field(), DISPATCH_EXT_HEADER);
+        assert_eq!(ext_header_packet.next_header(), NextHeader::Compressed);
+        assert_eq!(
+            ext_header_packet.extension_header_id(),
+            ExtHeaderId::RoutingHeader
+        );
+
+        let routing_header =
+            Ipv6RoutingHeader::new_checked_compressed(ext_header_packet.payload(), 2).unwrap();
+
+        assert_eq!(routing_header.next_header(), None);
+        assert_eq!(routing_header.header_len(), None);
+        assert_eq!(routing_header.routing_type(), Ipv6RoutingType::Rpl);
+        assert_eq!(routing_header.segments_left(), 2);
+        assert_eq!(routing_header.cmpr_i(), 9);
+        assert_eq!(routing_header.cmpr_e(), 9);
+        assert_eq!(routing_header.pad(), 2);
+
+        // TODO(thvdveld): fix address function. This uses the length field, which is for Extension
+        // Headers not in the payload.
+        assert_eq!(
+            routing_header.addresses(),
+            &[0x04, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x09, 0x00, 0x09, 0x00, 0x09, 0x00, 0x09]
+        );
+
+        _ = Ipv6RoutingRepr::parse(&routing_header).unwrap();
     }
 }

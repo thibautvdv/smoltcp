@@ -253,6 +253,25 @@ pub use self::dhcpv4::{
 #[cfg(feature = "proto-dns")]
 pub use self::dns::{Packet as DnsPacket, Repr as DnsRepr, Type as DnsQueryType};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PacketFormat {
+    Normal,
+    #[cfg(feature = "proto-sixlowpan")]
+    Compressed(usize),
+}
+
+impl PacketFormat {
+    /// Return the offset for the fields.
+    #[inline(always)]
+    fn offset(&self) -> usize {
+        match self {
+            PacketFormat::Normal => 0,
+            PacketFormat::Compressed(o) => *o,
+        }
+    }
+}
+
 /// Parsing a packet failed.
 ///
 /// Either it is malformed, or it is not supported by smoltcp.
