@@ -1609,6 +1609,10 @@ pub mod nhc {
                 _ => unreachable!(),
             }
         }
+
+        pub fn header_len(&self) -> u8 {
+            self.buffer.as_ref()[1]
+        }
     }
 
     impl<'a, T: AsRef<[u8]> + ?Sized> ExtHeaderPacket<&'a T> {
@@ -2361,11 +2365,15 @@ mod test {
             ExtHeaderId::RoutingHeader
         );
 
-        let routing_header =
-            Ipv6RoutingHeader::new_checked_compressed(ext_header_packet.payload(), 2).unwrap();
+        let routing_header = Ipv6RoutingHeader::new_checked_compressed(
+            ext_header_packet.payload(),
+            ext_header_packet.header_len(),
+            2,
+        )
+        .unwrap();
 
         assert_eq!(routing_header.next_header(), None);
-        assert_eq!(routing_header.header_len(), None);
+        assert_eq!(routing_header.header_len(), 22);
         assert_eq!(routing_header.routing_type(), Ipv6RoutingType::Rpl);
         assert_eq!(routing_header.segments_left(), 2);
         assert_eq!(routing_header.cmpr_i(), 9);

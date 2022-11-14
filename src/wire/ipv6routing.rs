@@ -164,10 +164,10 @@ impl<T: AsRef<[u8]>> Header<T> {
 
     /// Create a raw octet buffer with an IPv6 Routing Header structure.
     #[cfg(feature = "proto-sixlowpan")]
-    pub const fn new_unchecked_compressed(buffer: T, offset: usize) -> Header<T> {
+    pub const fn new_unchecked_compressed(buffer: T, len: u8, offset: usize) -> Header<T> {
         Header {
             buffer,
-            format: PacketFormat::Compressed(offset),
+            format: PacketFormat::Compressed { len, offset },
         }
     }
 
@@ -176,9 +176,9 @@ impl<T: AsRef<[u8]>> Header<T> {
     /// [new_unchecked_compressed]: #method.new_unchecked_compressed
     /// [check_len]: #method.check_len
     #[cfg(feature = "proto-sixlowpan")]
-    pub fn new_checked_compressed(buffer: T, offset: usize) -> Result<Header<T>> {
-        let header = Self::new_unchecked_compressed(buffer, offset);
-        //header.check_len()?;
+    pub fn new_checked_compressed(buffer: T, len: u8, offset: usize) -> Result<Header<T>> {
+        let header = Self::new_unchecked_compressed(buffer, len, offset);
+        header.check_len()?;
         Ok(header)
     }
 
@@ -194,16 +194,28 @@ impl<T: AsRef<[u8]>> Header<T> {
             return Err(Error);
         }
 
-        if len < field::DATA(self.header_len().unwrap(), self.format.offset()).end {
-            return Err(Error);
+        match self.format {
+            PacketFormat::Normal
+                if len < field::DATA(self.header_len(), self.format.offset()).end =>
+            {
+                return Err(Error);
+            }
+            #[cfg(feature = "proto-sixlowpan")]
+            PacketFormat::Compressed { len: length, .. } if len > 2 + length as usize => {
+                return Err(Error);
+            }
+            _ => (),
         }
 
-        // The header lenght field could be wrong and thus we need to check this as well:
-        if matches!(self.routing_type(), Type::Type2)
-            && field::DATA(self.header_len().unwrap(), self.format.offset()).end
-                != field::HOME_ADDRESS.end
-        {
-            return Err(Error);
+        match self.routing_type() {
+            // The header lenght field could be wrong and thus we need to check this as well:
+            Type::Type2
+                if field::DATA(self.header_len(), self.format.offset()).end
+                    != field::HOME_ADDRESS.end =>
+            {
+                return Err(Error);
+            }
+            _ => (),
         }
 
         Ok(())
@@ -221,7 +233,7 @@ impl<T: AsRef<[u8]>> Header<T> {
         match self.format {
             PacketFormat::Normal => Some(Protocol::from(self.buffer.as_ref()[field::NXT_HDR])),
             #[cfg(feature = "proto-sixlowpan")]
-            PacketFormat::Compressed(_) => None,
+            PacketFormat::Compressed { .. } => None,
         }
     }
 
@@ -229,11 +241,11 @@ impl<T: AsRef<[u8]>> Header<T> {
     /// not including the first 8 octets.
     /// The header length field is `None` for compressed headers.
     #[inline]
-    pub fn header_len(&self) -> Option<u8> {
+    pub fn header_len(&self) -> u8 {
         match self.format {
-            PacketFormat::Normal => Some(self.buffer.as_ref()[field::LENGTH]),
+            PacketFormat::Normal => self.buffer.as_ref()[field::LENGTH],
             #[cfg(feature = "proto-sixlowpan")]
-            PacketFormat::Compressed(_) => None,
+            PacketFormat::Compressed { len, .. } => len,
         }
     }
 
@@ -302,7 +314,15 @@ impl<T: AsRef<[u8]>> Header<T> {
     /// This function may panic if this header is not the RPL Source Routing Header routing type.
     pub fn addresses(&self) -> &[u8] {
         let data = self.buffer.as_ref();
-        &data[field::ADDRESSES(data[field::LENGTH], self.format.offset())]
+        match self.format {
+            PacketFormat::Normal => {
+                &data[field::ADDRESSES(data[field::LENGTH], self.format.offset())]
+            }
+            #[cfg(feature = "proto-sixlowpan")]
+            PacketFormat::Compressed { len, .. } => {
+                &data[6..][..len as usize - 6 - self.pad() as usize]
+            }
+        }
     }
 }
 
@@ -442,7 +462,7 @@ pub enum Repr<'a> {
         /// The type of header immediately following the Routing header.
         next_header: Option<Protocol>,
         /// Length of the Routing header in 8-octet units, not including the first 8 octets.
-        length: Option<u8>,
+        length: u8,
         /// Number of route segments remaining.
         segments_left: u8,
         /// The home address of the destination mobile node.
@@ -452,7 +472,7 @@ pub enum Repr<'a> {
         /// The type of header immediately following the Routing header.
         next_header: Option<Protocol>,
         /// Length of the Routing header in 8-octet units, not including the first 8 octets.
-        length: Option<u8>,
+        length: u8,
         /// Number of route segments remaining.
         segments_left: u8,
         /// Number of prefix octets from each segment, except the last segment, that are elided.
@@ -498,9 +518,7 @@ impl<'a> Repr<'a> {
     /// representation.
     pub fn buffer_len(&self) -> usize {
         match self {
-            &Repr::Rpl { length, .. } | &Repr::Type2 { length, .. } => {
-                field::DATA(length.unwrap(), 0).end
-            }
+            &Repr::Rpl { length, .. } | &Repr::Type2 { length, .. } => field::DATA(length, 0).end,
         }
     }
 
@@ -514,7 +532,7 @@ impl<'a> Repr<'a> {
                 home_address,
             } => {
                 header.set_next_header(next_header.unwrap());
-                header.set_header_len(length.unwrap());
+                header.set_header_len(length);
                 header.set_routing_type(Type::Type2);
                 header.set_segments_left(segments_left);
                 header.clear_reserved();
@@ -530,7 +548,7 @@ impl<'a> Repr<'a> {
                 addresses,
             } => {
                 header.set_next_header(next_header.unwrap());
-                header.set_header_len(length.unwrap());
+                header.set_header_len(length);
                 header.set_routing_type(Type::Rpl);
                 header.set_segments_left(segments_left);
                 header.set_cmpr_i(cmpr_i);
@@ -591,7 +609,7 @@ mod test {
     // A representation of a Type 2 Routing header
     static REPR_TYPE2: Repr = Repr::Type2 {
         next_header: Some(Protocol::Tcp),
-        length: Some(2),
+        length: 2,
         segments_left: 1,
         home_address: Address::LOOPBACK,
     };
@@ -606,7 +624,7 @@ mod test {
     // A representation of a Source Routing Header with full IPv6 addresses
     static REPR_SRH_FULL: Repr = Repr::Rpl {
         next_header: Some(Protocol::Tcp),
-        length: Some(4),
+        length: 4,
         segments_left: 2,
         cmpr_i: 0,
         cmpr_e: 0,
@@ -625,7 +643,7 @@ mod test {
     // A representation of a Source Routing Header with elided IPv6 addresses
     static REPR_SRH_ELIDED: Repr = Repr::Rpl {
         next_header: Some(Protocol::Tcp),
-        length: Some(1),
+        length: 1,
         segments_left: 2,
         cmpr_i: 15,
         cmpr_e: 14,
@@ -677,21 +695,21 @@ mod test {
     fn test_header_deconstruct() {
         let header = Header::new_unchecked(&BYTES_TYPE2[..]);
         assert_eq!(header.next_header(), Some(Protocol::Tcp));
-        assert_eq!(header.header_len(), Some(2));
+        assert_eq!(header.header_len(), 2);
         assert_eq!(header.routing_type(), Type::Type2);
         assert_eq!(header.segments_left(), 1);
         assert_eq!(header.home_address(), Address::LOOPBACK);
 
         let header = Header::new_unchecked(&BYTES_SRH_FULL[..]);
         assert_eq!(header.next_header(), Some(Protocol::Tcp));
-        assert_eq!(header.header_len(), Some(4));
+        assert_eq!(header.header_len(), 4);
         assert_eq!(header.routing_type(), Type::Rpl);
         assert_eq!(header.segments_left(), 2);
         assert_eq!(header.addresses(), &BYTES_SRH_FULL[8..]);
 
         let header = Header::new_unchecked(&BYTES_SRH_ELIDED[..]);
         assert_eq!(header.next_header(), Some(Protocol::Tcp));
-        assert_eq!(header.header_len(), Some(1));
+        assert_eq!(header.header_len(), 1);
         assert_eq!(header.routing_type(), Type::Rpl);
         assert_eq!(header.segments_left(), 2);
         assert_eq!(header.addresses(), &BYTES_SRH_ELIDED[8..]);

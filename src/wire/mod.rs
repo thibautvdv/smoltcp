@@ -258,7 +258,10 @@ pub use self::dns::{Packet as DnsPacket, Repr as DnsRepr, Type as DnsQueryType};
 pub enum PacketFormat {
     Normal,
     #[cfg(feature = "proto-sixlowpan")]
-    Compressed(usize),
+    Compressed {
+        len: u8,
+        offset: usize,
+    },
 }
 
 impl PacketFormat {
@@ -267,7 +270,8 @@ impl PacketFormat {
     fn offset(&self) -> usize {
         match self {
             PacketFormat::Normal => 0,
-            PacketFormat::Compressed(o) => *o,
+            #[cfg(feature = "proto-sixlowpan")]
+            PacketFormat::Compressed { offset, .. } => *offset,
         }
     }
 }
