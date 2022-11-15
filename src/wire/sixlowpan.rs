@@ -1611,7 +1611,7 @@ pub mod nhc {
         }
 
         pub fn header_len(&self) -> u8 {
-            self.buffer.as_ref()[1]
+            self.buffer.as_ref()[1 + self.next_header_size()]
         }
     }
 
@@ -2407,6 +2407,8 @@ mod test {
 
         assert_eq!(options_packet.option_type(), Ipv6OptionType::Rpl);
         assert_eq!(options_packet.data_len(), 4);
+
+        // TODO(thvdveld): replace this with the readl IPv6 RPL Option when working on RPL.
         assert_eq!(options_packet.data(), &[0x00, 0x1e, 0x04, 0x00]);
     }
 }
