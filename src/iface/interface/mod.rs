@@ -1548,6 +1548,14 @@ impl<'a> InterfaceInner<'a> {
         None
     }
 
+    pub fn rpl(&self) -> () {
+        todo!();
+    }
+
+    pub fn rpl_mut(&self) -> () {
+        todo!();
+    }
+
     #[cfg(feature = "proto-ipv6")]
     #[allow(unused)]
     pub(crate) fn get_source_address_ipv6(
