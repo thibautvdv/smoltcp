@@ -28,6 +28,3 @@ pub use socket_set::{SocketHandle, SocketSet, SocketStorage};
 pub use self::fragmentation::{PacketAssembler, PacketAssemblerSet as ReassemblyBuffer};
 
 pub use self::interface::{Interface, InterfaceBuilder, InterfaceInner as Context};
-
-#[cfg(feature = "proto-rpl")]
-pub use self::rpl::{Rpl, RplBuilder};

@@ -115,14 +115,7 @@ impl<'a> InterfaceInner<'a> {
 
         // TODO: add more checks.
         if ipv6_repr.dst_addr.is_unicast() && !self.has_ip_addr(ipv6_repr.dst_addr) {
-            if let Some(addr) = self.rpl.parent_address {
-                // TODO: check which one is actually used.
-                ipv6_repr.hop_limit -= 1;
-                iphc_repr.hop_limit -= 1;
-                return Some(IpPacket::Forward((ipv6_repr, addr, iphc_repr, payload)));
-            } else {
-                return None;
-            }
+            return None;
         }
 
         let mut next_header = iphc_repr.next_header;
@@ -471,28 +464,6 @@ impl<'a> InterfaceInner<'a> {
                 match packet {
                     #[cfg(feature = "socket-udp")]
                     IpPacket::Udp((_, udpv6_repr, payload)) => {
-                        let mut options_buffer: [u8; 6] = [0; 6];
-
-                        let mut ipv6_option_packet = Ipv6Option::new_unchecked(&mut options_buffer);
-                        let ipv6_option_repr = Ipv6OptionRepr::RplOption(&[]);
-                        ipv6_option_repr.emit(&mut ipv6_option_packet);
-
-                        let mut options_packet =
-                            RplDataPacket::new_unchecked(&mut options_buffer[2..]);
-                        options_packet.set_sender_rank(self.rpl.rank.dag_rank());
-                        options_packet.set_rpl_instance_id(self.rpl.instance_id.into());
-
-                        let hop_by_hop = Ipv6HopByHopRepr {
-                            next_header: Some(IpProtocol::Udp),
-                            length: 0,
-                            options: &options_buffer,
-                        };
-
-                        hop_by_hop.emit(&mut Ipv6HopByHopHeader::new_unchecked(b));
-
-                        b = &mut b[hop_by_hop.buffer_len()..]
-                            [..udpv6_repr.header_len() + payload.len()];
-
                         let mut udp_packet = UdpPacket::new_unchecked(&mut b);
                         udpv6_repr.emit(
                             &mut udp_packet,
@@ -503,17 +474,17 @@ impl<'a> InterfaceInner<'a> {
                             &self.checksum_caps(),
                         );
 
-                        //let udp_repr = SixlowpanUdpNhcRepr(udpv6_repr);
-                        //let mut udp_packet = SixlowpanUdpNhcPacket::new_unchecked(
-                        //&mut b[..udp_repr.header_len() + payload.len()],
-                        //);
-                        //udp_repr.emit(
-                        //&mut udp_packet,
-                        //&iphc_repr.src_addr,
-                        //&iphc_repr.dst_addr,
-                        //payload.len(),
-                        //|buf| buf.copy_from_slice(payload),
-                        //);
+                        let udp_repr = SixlowpanUdpNhcRepr(udpv6_repr);
+                        let mut udp_packet = SixlowpanUdpNhcPacket::new_unchecked(
+                            &mut b[..udp_repr.header_len() + payload.len()],
+                        );
+                        udp_repr.emit(
+                            &mut udp_packet,
+                            &iphc_repr.src_addr,
+                            &iphc_repr.dst_addr,
+                            payload.len(),
+                            |buf| buf.copy_from_slice(payload),
+                        );
                     }
                     #[cfg(feature = "socket-tcp")]
                     IpPacket::Tcp((_, tcp_repr)) => {
@@ -625,28 +596,6 @@ impl<'a> InterfaceInner<'a> {
 
                     #[cfg(feature = "socket-udp")]
                     IpPacket::Udp((_, udpv6_repr, payload)) => {
-                        let mut options_buffer: [u8; 6] = [0; 6];
-
-                        let mut ipv6_option_packet = Ipv6Option::new_unchecked(&mut options_buffer);
-                        let ipv6_option_repr = Ipv6OptionRepr::RplOption(&[]);
-                        ipv6_option_repr.emit(&mut ipv6_option_packet);
-
-                        let mut options_packet =
-                            RplDataPacket::new_unchecked(&mut options_buffer[2..]);
-                        options_packet.set_sender_rank(self.rpl.rank.dag_rank());
-                        options_packet.set_rpl_instance_id(self.rpl.instance_id.into());
-
-                        let hop_by_hop = Ipv6HopByHopRepr {
-                            next_header: Some(IpProtocol::Udp),
-                            length: 0,
-                            options: &options_buffer,
-                        };
-
-                        hop_by_hop.emit(&mut Ipv6HopByHopHeader::new_unchecked(tx_buf));
-
-                        tx_buf = &mut tx_buf[hop_by_hop.buffer_len()..]
-                            [..udpv6_repr.header_len() + payload.len()];
-
                         let mut udp_packet = UdpPacket::new_unchecked(&mut tx_buf);
                         udpv6_repr.emit(
                             &mut udp_packet,
@@ -656,17 +605,17 @@ impl<'a> InterfaceInner<'a> {
                             |buf| buf.copy_from_slice(payload),
                             &self.checksum_caps(),
                         );
-                        //let udp_repr = SixlowpanUdpNhcRepr(udpv6_repr);
-                        //let mut udp_packet = SixlowpanUdpNhcPacket::new_unchecked(
-                        //&mut tx_buf[..udp_repr.header_len() + payload.len()],
-                        //);
-                        //udp_repr.emit(
-                        //&mut udp_packet,
-                        //&iphc_repr.src_addr,
-                        //&iphc_repr.dst_addr,
-                        //payload.len(),
-                        //|buf| buf.copy_from_slice(payload),
-                        //);
+                        let udp_repr = SixlowpanUdpNhcRepr(udpv6_repr);
+                        let mut udp_packet = SixlowpanUdpNhcPacket::new_unchecked(
+                            &mut tx_buf[..udp_repr.header_len() + payload.len()],
+                        );
+                        udp_repr.emit(
+                            &mut udp_packet,
+                            &iphc_repr.src_addr,
+                            &iphc_repr.dst_addr,
+                            payload.len(),
+                            |buf| buf.copy_from_slice(payload),
+                        );
                     }
                     #[cfg(feature = "socket-tcp")]
                     IpPacket::Tcp((_, tcp_repr)) => {

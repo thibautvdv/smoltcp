@@ -39,9 +39,6 @@ use crate::iface::{NeighborAnswer, NeighborCache};
 #[cfg(feature = "socket-dns")]
 use crate::socket::dns;
 
-#[cfg(feature = "proto-rpl")]
-use crate::iface::rpl::{Rank, Rpl, RplBuilder};
-
 pub(crate) struct FragmentsBuffer<'a> {
     #[cfg(feature = "proto-ipv4-fragmentation")]
     pub(crate) ipv4_fragments: PacketAssemblerSet<'a, Ipv4FragKey>,
@@ -282,9 +279,6 @@ pub struct InterfaceInner<'a> {
     /// When to report for (all or) the next multicast group membership via IGMP
     #[cfg(feature = "proto-igmp")]
     igmp_report_state: IgmpReportState,
-
-    #[cfg(feature = "proto-rpl")]
-    rpl: Rpl,
 }
 
 /// A builder structure used for creating a network interface.
@@ -657,13 +651,6 @@ let iface = builder.finalize(&mut device);
             _ => Ipv6Address::default(),
         };
 
-        // TODO: maybe we don't need now for the builder.
-        #[cfg(feature = "proto-rpl")]
-        let rpl = RplBuilder::new(Instant::ZERO, &mut rand)
-            .set_root()
-            .set_dodag_id(dodag_id)
-            .finalize();
-
         Interface {
             fragments: FragmentsBuffer {
                 #[cfg(feature = "proto-ipv4-fragmentation")]
@@ -714,8 +701,6 @@ let iface = builder.finalize(&mut device);
                 ipv4_id,
                 #[cfg(feature = "proto-sixlowpan")]
                 sixlowpan_address_context: self.sixlowpan_address_context,
-                #[cfg(feature = "proto-rpl")]
-                rpl,
             },
         }
     }
@@ -1097,9 +1082,6 @@ impl<'a> Interface<'a> {
     {
         self.inner.now = timestamp;
 
-        #[cfg(feature = "proto-rpl")]
-        self.poll_rpl(timestamp, device, sockets);
-
         let InterfaceInner {
             now,
             rand,
@@ -1167,12 +1149,6 @@ impl<'a> Interface<'a> {
     pub fn poll_at(&mut self, timestamp: Instant, sockets: &SocketSet<'_>) -> Option<Instant> {
         self.inner.now = timestamp;
 
-        #[cfg(feature = "proto-rpl")]
-        let min = Some(self.poll_at_rpl(timestamp, sockets));
-
-        #[cfg(not(feature = "proto-rpl"))]
-        let min = None;
-
         #[cfg(feature = "proto-sixlowpan-fragmentation")]
         if !self.out_packets.all_transmitted() {
             return Some(Instant::from_millis(0));
@@ -1180,7 +1156,7 @@ impl<'a> Interface<'a> {
 
         let inner = &mut self.inner;
 
-        let result = sockets
+        sockets
             .items()
             .filter_map(move |item| {
                 let socket_poll_at = item.socket.poll_at(inner);
@@ -1193,13 +1169,8 @@ impl<'a> Interface<'a> {
                     PollAt::Now => Some(Instant::from_millis(0)),
                 }
             })
-            .min();
+            .min()
 
-        if result.is_none() {
-            min
-        } else {
-            result.min(min)
-        }
     }
 
     /// Return an _advisory wait time_ for calling [poll] the next time.
@@ -1215,68 +1186,6 @@ impl<'a> Interface<'a> {
             Some(poll_at) if timestamp < poll_at => Some(poll_at - timestamp),
             Some(_) => Some(Duration::from_millis(0)),
             _ => None,
-        }
-    }
-
-    #[cfg(feature = "proto-rpl")]
-    fn poll_rpl<D>(
-        &mut self,
-        timestamp: Instant,
-        device: &mut D,
-        sockets: &mut SocketSet<'_>,
-    ) -> Result<bool>
-    where
-        D: Device + ?Sized,
-    {
-        let InterfaceInner {
-            rpl,
-            now,
-            rand,
-            hardware_addr,
-            ..
-        } = &mut self.inner;
-
-        if (rpl.has_parent()
-            && rpl.parent_last_heard.unwrap_or(*now) < *now - rpl.dio_timer.max_expiration())
-        {
-            rpl.parent_address = None;
-            rpl.parent_rank = None;
-            rpl.parent_preference = None;
-            rpl.rank = Rank::INFINITE;
-        }
-
-        if rpl.should_send_dis(*now) {
-            rpl.set_dis_expiration(*now + Duration::from_secs(60));
-            match self.transmit_rpl_dis(device) {
-                Ok(()) => {
-                    return Ok(true);
-                }
-                Err(e) => {
-                    net_debug!("failed to transmit: {}", e);
-                    return Err(e);
-                }
-            }
-        }
-
-        if (rpl.has_parent() || rpl.is_root) && rpl.dio_timer.poll(*now, rand) {
-            match self.transmit_rpl_dio(device) {
-                Ok(()) => Ok(true),
-                Err(e) => {
-                    net_debug!("failed to transmit: {}", e);
-                    Err(e)
-                }
-            }
-        } else {
-            Ok(false)
-        }
-    }
-
-    #[cfg(feature = "proto-rpl")]
-    pub fn poll_at_rpl(&mut self, timestamp: Instant, sockets: &SocketSet<'_>) -> Instant {
-        if self.inner.rpl.has_parent() || self.inner.rpl.is_root {
-            self.inner.rpl.dio_timer.poll_at()
-        } else {
-            self.inner.rpl.dis_expiration
         }
     }
 
@@ -1583,72 +1492,6 @@ impl<'a> Interface<'a> {
             Ok(false)
         }
     }
-
-    #[cfg(feature = "proto-rpl")]
-    fn transmit_rpl_dis<D>(&mut self, device: &mut D) -> Result<()>
-    where
-        D: Device + ?Sized,
-    {
-        let icmp_rpl = Icmpv6Repr::Rpl(RplRepr::DodagInformationSolicitation { options: &[] });
-
-        let ipv6_repr = Ipv6Repr {
-            src_addr: self.inner.ipv6_address().unwrap(),
-            dst_addr: Ipv6Address::LINK_LOCAL_ALL_RPL_NODES,
-            next_header: IpProtocol::Icmpv6,
-            payload_len: icmp_rpl.buffer_len(),
-            hop_limit: 64,
-        };
-
-        match device.transmit() {
-            Some(tx_token) => self.inner.dispatch_ip(
-                tx_token,
-                IpPacket::Icmpv6((ipv6_repr, icmp_rpl)),
-                Some(&mut self.out_packets),
-            ),
-            None => Err(Error::Exhausted),
-        }
-    }
-
-    #[cfg(feature = "proto-rpl")]
-    fn transmit_rpl_dio<D>(&mut self, device: &mut D) -> Result<()>
-    where
-        D: Device + ?Sized,
-    {
-        let mut buffer = [0; 128];
-        let dodag_conf = self.inner.rpl.dodag_configuration();
-        dodag_conf.emit(&mut RplOptionPacket::new_unchecked(&mut buffer));
-
-        let mut options = &[self.inner.rpl.dodag_configuration()];
-
-        let icmp_rpl = Icmpv6Repr::Rpl(RplRepr::DodagInformationObject {
-            rpl_instance_id: self.inner.rpl.instance_id,
-            version_number: self.inner.rpl.version_number.value(),
-            rank: self.inner.rpl.rank.value,
-            grounded: self.inner.rpl.grounded,
-            mode_of_operation: self.inner.rpl.mode_of_operation,
-            dodag_preference: self.inner.rpl.dodag_preference,
-            dtsn: self.inner.rpl.dtsn.value(),
-            dodag_id: self.inner.rpl.dodag_id.unwrap(),
-            options: &buffer[..dodag_conf.buffer_len()],
-        });
-
-        let ipv6_repr = Ipv6Repr {
-            src_addr: self.inner.ipv6_address().unwrap(),
-            dst_addr: Ipv6Address::LINK_LOCAL_ALL_RPL_NODES,
-            next_header: IpProtocol::Icmpv6,
-            payload_len: icmp_rpl.buffer_len(),
-            hop_limit: 64,
-        };
-
-        match device.transmit() {
-            Some(tx_token) => self.inner.dispatch_ip(
-                tx_token,
-                IpPacket::Icmpv6((ipv6_repr, icmp_rpl)),
-                Some(&mut self.out_packets),
-            ),
-            None => Err(Error::Exhausted),
-        }
-    }
 }
 
 impl<'a> InterfaceInner<'a> {
@@ -1785,9 +1628,6 @@ impl<'a> InterfaceInner<'a> {
             igmp_report_state: IgmpReportState::Inactive,
             #[cfg(feature = "proto-igmp")]
             ipv4_multicast_groups: ManagedMap::Borrowed(&mut []),
-
-            #[cfg(feature = "proto-rpl")]
-            rpl: RplBuilder::new(Instant::ZERO, &mut Rand::new(0)).finalize(),
         }
     }
 
@@ -1893,16 +1733,6 @@ impl<'a> InterfaceInner<'a> {
             #[allow(unreachable_patterns)]
             _ => false,
         }
-    }
-
-    #[cfg(feature = "proto-rpl")]
-    pub fn rpl(&self) -> &Rpl {
-        &self.rpl
-    }
-
-    #[cfg(feature = "proto-rpl")]
-    pub fn rpl_mut(&mut self) -> &mut Rpl {
-        &mut self.rpl
     }
 
     #[cfg(feature = "medium-ip")]
@@ -2310,63 +2140,13 @@ impl<'a> InterfaceInner<'a> {
 
         #[cfg(feature = "medium-ieee802154")]
         if matches!(self.caps.medium, Medium::Ieee802154) {
-            //let (dst_hardware_addr, tx_token) = match self.lookup_hardware_addr(
-            //tx_token,
-            //&ip_repr.src_addr(),
-            //&ip_repr.dst_addr(),
-            //)? {
-            //(HardwareAddress::Ieee802154(addr), tx_token) => (addr, tx_token),
-            //_ => unreachable!(),
-            //};
-            let dst_hardware_addr = if ip_repr.dst_addr().is_multicast() {
-                Ieee802154Address::BROADCAST
-            } else {
-                match packet {
-                    IpPacket::Forward((_, addr, _, _)) => {
-                        //log::error!("Forwarding it...");
-                        if let Some((node, _)) =
-                            self.rpl.neighbor_table.get_neighbor_from_ip_addr(&addr)
-                        {
-                            match node.link_layer_addr() {
-                                #[cfg(feature = "medium-ethernet")]
-                                HardwareAddress::Ethernet(_) => unreachable!(),
-                                HardwareAddress::Ieee802154(a) => a,
-                            }
-                        } else {
-                            todo!();
-                        }
-                    }
-                    _ => {
-                        if let Some((node, _)) = self.rpl.neighbor_table.get_neighbor_from_ip_addr(
-                            if let IpRepr::Ipv6(ref ipv6_repr) = ip_repr {
-                                &ipv6_repr.dst_addr
-                            } else {
-                                unreachable!()
-                            },
-                        ) {
-                            match node.link_layer_addr() {
-                                #[cfg(feature = "medium-ethernet")]
-                                HardwareAddress::Ethernet(_) => unreachable!(),
-                                HardwareAddress::Ieee802154(a) => a,
-                            }
-                        } else if let Some(p_addr) = self.rpl.parent_address {
-                            if let Some((node, _)) =
-                                self.rpl.neighbor_table.get_neighbor_from_ip_addr(&p_addr)
-                            {
-                                match node.link_layer_addr() {
-                                    #[cfg(feature = "medium-ethernet")]
-                                    HardwareAddress::Ethernet(_) => unreachable!(),
-                                    HardwareAddress::Ieee802154(a) => a,
-                                }
-                            } else {
-                                net_trace!("No parent yet, so cannot send it.");
-                                return Ok(());
-                            }
-                        } else {
-                            return Ok(());
-                        }
-                    }
-                }
+            let (dst_hardware_addr, tx_token) = match self.lookup_hardware_addr(
+            tx_token,
+            &ip_repr.src_addr(),
+            &ip_repr.dst_addr(),
+            )? {
+            (HardwareAddress::Ieee802154(addr), tx_token) => (addr, tx_token),
+            _ => unreachable!(),
             };
 
             return self.dispatch_ieee802154(
