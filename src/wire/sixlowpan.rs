@@ -2212,6 +2212,7 @@ pub mod nhc {
             packet: &mut UdpNhcPacket<T>,
             src_addr: &Address,
             dst_addr: &Address,
+            checksum_caps: &ChecksumCapabilities,
             payload_len: usize,
             emit_payload: impl FnOnce(&mut [u8]),
         ) {
@@ -2219,20 +2220,22 @@ pub mod nhc {
             packet.set_ports(self.src_port, self.dst_port);
             emit_payload(packet.payload_mut());
 
-            let chk_sum = !checksum::combine(&[
-                checksum::pseudo_header(
-                    &IpAddress::Ipv6(*src_addr),
-                    &IpAddress::Ipv6(*dst_addr),
-                    crate::wire::ip::Protocol::Udp,
-                    payload_len as u32 + 8,
-                ),
-                self.src_port,
-                self.dst_port,
-                payload_len as u16 + 8,
-                checksum::data(packet.payload_mut()),
-            ]);
+            if checksum_caps.udp.tx() {
+                let chk_sum = !checksum::combine(&[
+                    checksum::pseudo_header(
+                        &IpAddress::Ipv6(*src_addr),
+                        &IpAddress::Ipv6(*dst_addr),
+                        crate::wire::ip::Protocol::Udp,
+                        payload_len as u32 + 8,
+                    ),
+                    self.src_port,
+                    self.dst_port,
+                    payload_len as u16 + 8,
+                    checksum::data(packet.payload_mut()),
+                ]);
 
-            packet.set_checksum(chk_sum);
+                packet.set_checksum(chk_sum);
+            }
         }
     }
 
@@ -2310,9 +2313,14 @@ pub mod nhc {
             let len = udp.header_len() + payload.len();
             let mut buffer = [0u8; 127];
             let mut packet = UdpNhcPacket::new_unchecked(&mut buffer[..len]);
-            udp.emit(&mut packet, &src_addr, &dst_addr, payload.len(), |buf| {
-                buf.copy_from_slice(&payload[..])
-            });
+            udp.emit(
+                &mut packet,
+                &src_addr,
+                &dst_addr,
+                &ChecksumCapabilities::default(),
+                payload.len(),
+                |buf| buf.copy_from_slice(&payload[..]),
+            );
 
             assert_eq!(packet.dispatch_field(), DISPATCH_UDP_HEADER);
             assert_eq!(packet.src_port(), 0xf0b1);
