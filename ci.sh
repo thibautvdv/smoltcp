@@ -73,6 +73,14 @@ clippy() {
     cargo +$MSRV clippy --tests --examples -- -D warnings
 }
 
+coverage() {
+    cargo install cargo-llvm-cov --locked
+    for features in ${FEATURES_TEST[@]}; do
+        cargo llvm-cov --no-report --no-default-features --features "$features"
+    done
+    cargo llvm-cov report --lcov --output-path lcov.info
+}
+
 if [[ $1 == "test" || $1 == "all" ]]; then
     if [[ -n $2 ]]; then
         if [[ $2 == "msrv" ]]; then
@@ -103,4 +111,8 @@ fi
 
 if [[ $1 == "clippy" || $1 == "all" ]]; then
     clippy
+fi
+
+if [[ $1 == "coverage" || $1 == "all" ]]; then
+    coverage
 fi
