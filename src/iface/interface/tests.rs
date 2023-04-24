@@ -1058,16 +1058,16 @@ fn test_icmpv6_nxthdr_unknown() {
         ip_repr.emit(&mut bytes, &ChecksumCapabilities::default());
         let mut offset = ipv6_repr.buffer_len();
         {
-            let mut hbh_pkt = Ipv6HopByHopHeader::new_unchecked(&mut bytes[offset..]);
-            hbh_pkt.set_next_header(IpProtocol::Unknown(0x0c));
-            hbh_pkt.set_header_len(0);
+            let mut ext_hdr = Ipv6ExtHeader::new_unchecked(&mut bytes[offset..]);
+            ext_hdr.set_next_header(IpProtocol::Unknown(0x0c));
+            ext_hdr.set_header_len(0);
             offset += 8;
             {
-                let mut pad_pkt = Ipv6Option::new_unchecked(&mut *hbh_pkt.options_mut());
+                let mut pad_pkt = Ipv6Option::new_unchecked(&mut ext_hdr.payload_mut()[..]);
                 Ipv6OptionRepr::PadN(3).emit(&mut pad_pkt);
             }
             {
-                let mut pad_pkt = Ipv6Option::new_unchecked(&mut hbh_pkt.options_mut()[5..]);
+                let mut pad_pkt = Ipv6Option::new_unchecked(&mut ext_hdr.payload_mut()[5..]);
                 Ipv6OptionRepr::Pad1.emit(&mut pad_pkt);
             }
         }
