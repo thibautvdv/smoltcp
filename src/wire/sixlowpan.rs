@@ -1640,6 +1640,11 @@ pub mod nhc {
             }
         }
 
+        /// Return the length field.
+        pub fn length(&self) -> u8 {
+            self.buffer.as_ref()[1 + self.next_header_size()]
+        }
+
         /// Parse the next header field.
         pub fn next_header(&self) -> NextHeader {
             if self.nh_field() == 1 {
@@ -1669,7 +1674,8 @@ pub mod nhc {
         /// Return a pointer to the payload.
         pub fn payload(&self) -> &'a [u8] {
             let start = 2 + self.next_header_size();
-            &self.buffer.as_ref()[start..]
+            let len = self.length() as usize;
+            &self.buffer.as_ref()[start..][..len]
         }
     }
 
@@ -1677,7 +1683,8 @@ pub mod nhc {
         /// Return a mutable pointer to the payload.
         pub fn payload_mut(&mut self) -> &mut [u8] {
             let start = 2 + self.next_header_size();
-            &mut self.buffer.as_mut()[start..]
+            let len = self.length() as usize;
+            &mut self.buffer.as_mut()[start..][..len]
         }
 
         /// Set the dispatch field to `0b1110`.
@@ -1749,7 +1756,7 @@ pub mod nhc {
             Ok(Self {
                 ext_header_id: packet.extension_header_id(),
                 next_header: packet.next_header(),
-                length: packet.payload().len() as u8,
+                length: packet.length(),
             })
         }
 
