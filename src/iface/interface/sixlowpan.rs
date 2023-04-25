@@ -238,6 +238,22 @@ impl InterfaceInner {
             IpRepr::Ipv6(repr) => repr,
         };
 
+        // TODO(thvdveld): also check that we are actually using the RPL protocol.
+        #[cfg(feature = "proto-rpl")]
+        let hop_by_hop = if ip_repr.dst_addr.is_unicast() {
+            Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
+                down: false,
+                rank_error: false,
+                forwarding_error: false,
+                instance_id: todo!(),
+                sender_rank: todo!(),
+            }))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "proto-rpl"))]
+        let hop_by_hop: Option<Ipv6OptionRepr> = None;
+
         let next_header = match packet {
             #[cfg(feature = "proto-ipv6")]
             IpPacket::Icmpv6(_) => SixlowpanNextHeader::Uncompressed(IpProtocol::Icmpv6),
@@ -256,7 +272,11 @@ impl InterfaceInner {
             ll_src_addr: ieee_repr.src_addr,
             dst_addr: ip_repr.dst_addr,
             ll_dst_addr: ieee_repr.dst_addr,
-            next_header,
+            next_header: if hop_by_hop.is_some() {
+                SixlowpanNextHeader::Compressed
+            } else {
+                next_header
+            },
             hop_limit: ip_repr.hop_limit,
             ecn: None,
             dscp: None,
@@ -266,8 +286,25 @@ impl InterfaceInner {
         iphc_repr.emit(&mut SixlowpanIphcPacket::new_unchecked(
             &mut buffer[..iphc_repr.buffer_len()],
         ));
-
         buffer = &mut buffer[iphc_repr.buffer_len()..];
+
+        // Emit the Hop-by-Hop header, required for RPL
+        if let Some(hbh) = hop_by_hop {
+            let ext_hdr = SixlowpanExtHeaderRepr {
+                ext_header_id: SixlowpanExtHeaderId::HopByHopHeader,
+                next_header,
+                length: hbh.buffer_len() as u8,
+            };
+            ext_hdr.emit(&mut SixlowpanExtHeaderPacket::new_unchecked(
+                &mut buffer[..ext_hdr.buffer_len()],
+            ));
+            buffer = &mut buffer[ext_hdr.buffer_len()..];
+
+            hbh.emit(&mut Ipv6Option::new_unchecked(
+                &mut buffer[..hbh.buffer_len()],
+            ));
+            buffer = &mut buffer[hbh.buffer_len()..];
+        }
 
         match packet {
             IpPacket::Icmpv6((_, icmp_repr)) => {
@@ -472,6 +509,23 @@ impl InterfaceInner {
             IpRepr::Ipv6(repr) => repr,
         };
 
+        // TODO(thvdveld): also check that we are actually using the RPL protocol.
+        #[cfg(feature = "proto-rpl")]
+        let hop_by_hop = if ip_repr.dst_addr.is_unicast() {
+            Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
+                down: todo!(),
+                rank_error: todo!(),
+                forwarding_error: todo!(),
+                instance_id: todo!(),
+                sender_rank: todo!(),
+            }))
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "proto-rpl"))]
+        let hop_by_hop: Option<Ipv6OptionRepr> = None;
+
         let next_header = match packet {
             #[cfg(feature = "proto-ipv6")]
             IpPacket::Icmpv6(_) => SixlowpanNextHeader::Uncompressed(IpProtocol::Icmpv6),
@@ -490,7 +544,11 @@ impl InterfaceInner {
             ll_src_addr: ieee_repr.src_addr,
             dst_addr: ip_repr.dst_addr,
             ll_dst_addr: ieee_repr.dst_addr,
-            next_header,
+            next_header: if hop_by_hop.is_some() {
+                SixlowpanNextHeader::Compressed
+            } else {
+                next_header
+            },
             hop_limit: ip_repr.hop_limit,
             ecn: None,
             dscp: None,
@@ -500,6 +558,19 @@ impl InterfaceInner {
         total_size += iphc.buffer_len();
         compressed_hdr_size += iphc.buffer_len();
         uncompressed_hdr_size += ip_repr.buffer_len();
+
+        // Add the hop-by-hop to the sizes.
+        if let Some(hbh) = hop_by_hop {
+            let ext_hdr = SixlowpanExtHeaderRepr {
+                ext_header_id: SixlowpanExtHeaderId::HopByHopHeader,
+                next_header,
+                length: hbh.buffer_len() as u8,
+            };
+            total_size += ext_hdr.buffer_len() + hbh.buffer_len();
+            compressed_hdr_size += ext_hdr.buffer_len() + hbh.buffer_len();
+            todo!();
+            //uncompressed_hdr_size += Ipv6EtHeader { }.buffer_len() + hbh.buffer_len();
+        }
 
         match packet {
             #[cfg(feature = "socket-udp")]

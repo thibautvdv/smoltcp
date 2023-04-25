@@ -1731,9 +1731,9 @@ pub mod nhc {
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ExtHeaderRepr {
-        ext_header_id: ExtHeaderId,
-        next_header: NextHeader,
-        length: u8,
+        pub ext_header_id: ExtHeaderId,
+        pub next_header: NextHeader,
+        pub length: u8,
     }
 
     impl ExtHeaderRepr {
