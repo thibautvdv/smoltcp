@@ -1,7 +1,9 @@
 #![allow(unused)]
 
-mod consts;
+pub(crate) mod of0;
+pub(crate) mod consts;
 pub(crate) mod lollipop;
+pub(crate) mod neighbor_table;
 pub(crate) mod rank;
 pub(crate) mod trickle;
 
@@ -119,6 +121,8 @@ pub(crate) struct Rpl {
     pub(crate) dio_timer: trickle::TrickleTimer,
     pub(crate) dis_expiration: Instant,
 
+    pub(crate) neighbors: neighbor_table::RplNeighborTable,
+
     pub(crate) parent_address: Option<Ipv6Address>,
     pub(crate) parent_rank: Option<rank::Rank>,
     pub(crate) parent_preference: Option<u8>,
@@ -149,9 +153,12 @@ impl Rpl {
             dtsn: config.dtsn,
             mode_of_operation: config.mode_of_operation,
             preference: config.root.map(|root| root.preference).unwrap_or(0),
+
             dio_timer: config.dio_timer,
             // TODO(thvdveld): we want to have it differently.
             dis_expiration: Instant::ZERO + Duration::from_secs(5),
+
+            neighbors: neighbor_table::RplNeighborTable::default(),
 
             parent_address: None,
             parent_rank: None,

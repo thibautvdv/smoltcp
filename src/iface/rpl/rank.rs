@@ -25,8 +25,8 @@ use super::consts::DEFAULT_MIN_HOP_RANK_INCREASE;
 #[derive(Debug, Clone, Copy, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Rank {
-    value: u16,
-    min_hop_rank_increase: u16,
+    pub(crate) value: u16,
+    pub(crate) min_hop_rank_increase: u16,
 }
 
 impl core::fmt::Display for Rank {
