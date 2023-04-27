@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 mod consts;
-mod lollipop;
+pub(crate) mod lollipop;
 pub(crate) mod rank;
 pub(crate) mod trickle;
 

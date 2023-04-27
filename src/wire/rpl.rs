@@ -2222,6 +2222,61 @@ pub mod options {
             }
         }
     }
+
+    /// A iterator for RPl options.
+    #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct OptionsIterator<'a> {
+        pos: usize,
+        length: usize,
+        data: &'a [u8],
+        hit_error: bool,
+    }
+
+    impl<'a> OptionsIterator<'a> {
+        /// Create a new `OptionsIterator`, used to iterate over the
+        /// options contained in a RPL header.
+        pub fn new(data: &'a [u8]) -> Self {
+            let length = data.len();
+            Self {
+                pos: 0,
+                hit_error: false,
+                length,
+                data,
+            }
+        }
+    }
+
+    impl<'a> Iterator for OptionsIterator<'a> {
+        type Item = Result<Repr<'a>>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.pos < self.length && !self.hit_error {
+                // If we still have data to parse and we have not previously
+                // hit an error, attempt to parse the next option.
+                match Packet::new_checked(&self.data[self.pos..]) {
+                    Ok(hdr) => match Repr::parse(&hdr) {
+                        Ok(repr) => {
+                            self.pos += repr.buffer_len();
+                            Some(Ok(repr))
+                        }
+                        Err(e) => {
+                            self.hit_error = true;
+                            Some(Err(e))
+                        }
+                    },
+                    Err(e) => {
+                        self.hit_error = true;
+                        Some(Err(e))
+                    }
+                }
+            } else {
+                // If we failed to parse a previous option or hit the end of the
+                // buffer, we do not continue to iterate.
+                None
+            }
+        }
+    }
 }
 
 pub mod data {

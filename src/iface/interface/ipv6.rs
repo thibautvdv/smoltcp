@@ -165,6 +165,10 @@ impl InterfaceInner {
             #[cfg(feature = "socket-icmp")]
             _ if handled_by_icmp_socket => None,
 
+            #[cfg(feature = "proto-rpl")]
+            // Only process RPL packets when we actually are using RPL.
+            Icmpv6Repr::Rpl(rpl) if self.rpl.is_some() => self.process_rpl(ip_repr, rpl),
+
             // FIXME: do something correct here?
             _ => None,
         }

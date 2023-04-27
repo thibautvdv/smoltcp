@@ -17,6 +17,9 @@ mod ipv6;
 #[cfg(feature = "proto-sixlowpan")]
 mod sixlowpan;
 
+#[cfg(feature = "proto-rpl")]
+mod rpl;
+
 #[cfg(feature = "proto-igmp")]
 mod igmp;
 
