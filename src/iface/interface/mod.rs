@@ -573,11 +573,7 @@ impl Interface {
                 sixlowpan_address_context: Vec::new(),
                 rand,
                 #[cfg(feature = "proto-rpl")]
-                rpl: if let Some(rpl_conf) = config.rpl {
-                    Some(super::Rpl::new(rpl_conf))
-                } else {
-                    None
-                },
+                rpl: config.rpl.map(super::Rpl::new),
             },
         }
     }
@@ -766,6 +762,11 @@ impl Interface {
             }
         }
 
+        #[cfg(feature = "proto-rpl")]
+        if self.inner.rpl.is_some() {
+            self.poll_rpl(device);
+        }
+
         let mut readiness_may_have_changed = false;
 
         loop {
@@ -804,9 +805,19 @@ impl Interface {
             return Some(Instant::from_millis(0));
         }
 
+        #[cfg(feature = "proto-rpl")]
+        let min = if self.inner.rpl.is_some() {
+            Some(self.poll_at_rpl())
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "proto-rpl"))]
+        let min = None;
+
         let inner = &mut self.inner;
 
-        sockets
+        let sockets_min = sockets
             .items()
             .filter_map(move |item| {
                 let socket_poll_at = item.socket.poll_at(inner);
@@ -819,7 +830,9 @@ impl Interface {
                     PollAt::Now => Some(Instant::from_millis(0)),
                 }
             })
-            .min()
+            .min();
+
+        min.min(sockets_min)
     }
 
     /// Return an _advisory wait time_ for calling [poll] the next time.
@@ -835,6 +848,49 @@ impl Interface {
             Some(poll_at) if timestamp < poll_at => Some(poll_at - timestamp),
             Some(_) => Some(Duration::from_millis(0)),
             _ => None,
+        }
+    }
+
+    #[cfg(feature = "proto-rpl")]
+    fn poll_rpl<D>(&mut self, device: &mut D) -> bool
+    where
+        D: Device + ?Sized,
+    {
+        let InterfaceInner { rpl, now, rand, .. } = &mut self.inner;
+        let rpl = rpl.as_mut().unwrap();
+
+        if rpl.has_parent()
+            && rpl.parent_last_heard.unwrap_or(*now) < *now - rpl.dio_timer.max_expiration() * 2
+        {
+            rpl.parent_address = None;
+            rpl.parent_rank = None;
+            rpl.parent_preference = None;
+            rpl.rank = super::rpl::rank::Rank::INFINITE;
+
+            return self.transmit_rpl_dio(device);
+        }
+
+        // This is for transmitting DIS messages.
+        if rpl.should_send_dis(*now) {
+            rpl.dis_expiration = *now + Duration::from_secs(60);
+            return self.transmit_rpl_dis(device);
+        }
+
+        // This is for transmitting DIO messages periodically.
+        if (rpl.has_parent() || rpl.is_root) && rpl.dio_timer.poll(*now, rand) {
+            return self.transmit_rpl_dio(device);
+        }
+
+        false
+    }
+
+    #[cfg(feature = "proto-rpl")]
+    pub fn poll_at_rpl(&mut self) -> Instant {
+        let rpl = self.inner.rpl.as_ref().unwrap();
+        if rpl.has_parent() || rpl.is_root {
+            rpl.dio_timer.poll_at()
+        } else {
+            rpl.dis_expiration
         }
     }
 
@@ -1045,6 +1101,92 @@ impl Interface {
                 return true;
             }
         }
+        false
+    }
+
+    #[cfg(feature = "proto-rpl")]
+    fn transmit_rpl_dis<D>(&mut self, device: &mut D) -> bool
+    where
+        D: Device + ?Sized,
+    {
+        let dis = RplRepr::DodagInformationSolicitation { options: &[] };
+        let icmp_rpl = Icmpv6Repr::Rpl(dis);
+
+        // TODO(thvdveld): remove unwrap
+        let ipv6_repr = Ipv6Repr {
+            src_addr: self.inner.ipv6_addr().unwrap(),
+            dst_addr: Ipv6Address::LINK_LOCAL_ALL_RPL_NODES,
+            next_header: IpProtocol::Icmpv6,
+            payload_len: icmp_rpl.buffer_len(),
+            hop_limit: 64,
+        };
+
+        if let Some(tx_token) = device.transmit(self.inner.now) {
+            match self.inner.dispatch_ip(
+                tx_token,
+                IpPacket::Icmpv6((ipv6_repr, icmp_rpl)),
+                &mut self.fragmenter,
+            ) {
+                Ok(()) => return true,
+                Err(e) => {
+                    net_debug!("Failed to send DIS: {e:?}");
+                    return false;
+                }
+            }
+        }
+
+        false
+    }
+
+    #[cfg(feature = "proto-rpl")]
+    fn transmit_rpl_dio<D>(&mut self, device: &mut D) -> bool
+    where
+        D: Device + ?Sized,
+    {
+        let rpl = self.inner.rpl.as_mut().unwrap();
+        let mut options = [0u8; 64];
+
+        let dodag_conf = rpl.dodag_configuration();
+        let len = dodag_conf.buffer_len();
+        dodag_conf.emit(&mut RplOptionPacket::new_unchecked(&mut options[..len]));
+        let options = &options[..len];
+
+        let dio = RplRepr::DodagInformationObject {
+            rpl_instance_id: rpl.instance_id,
+            version_number: rpl.version_number.value(),
+            rank: rpl.rank.raw_value(),
+            grounded: rpl.grounded,
+            mode_of_operation: rpl.mode_of_operation.into(),
+            dodag_preference: rpl.preference,
+            dtsn: rpl.dtsn.value(),
+            dodag_id: rpl.dodag_id.unwrap(),
+            options,
+        };
+        let icmp_rpl = Icmpv6Repr::Rpl(dio);
+
+        // TODO(thvdveld): remove unwrap
+        let ipv6_repr = Ipv6Repr {
+            src_addr: self.inner.ipv6_addr().unwrap(),
+            dst_addr: Ipv6Address::LINK_LOCAL_ALL_RPL_NODES,
+            next_header: IpProtocol::Icmpv6,
+            payload_len: icmp_rpl.buffer_len(),
+            hop_limit: 64,
+        };
+
+        if let Some(tx_token) = device.transmit(self.inner.now) {
+            match self.inner.dispatch_ip(
+                tx_token,
+                IpPacket::Icmpv6((ipv6_repr, icmp_rpl)),
+                &mut self.fragmenter,
+            ) {
+                Ok(()) => return true,
+                Err(e) => {
+                    net_debug!("Failed to send DIS: {e:?}");
+                    return false;
+                }
+            }
+        }
+
         false
     }
 }
