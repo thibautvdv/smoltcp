@@ -347,6 +347,26 @@ impl<'a> IpPacket<'a> {
         }
     }
 
+    #[cfg(feature = "proto-sixlowpan")]
+    pub(crate) fn as_sixlowpan_next_header(&self) -> SixlowpanNextHeader {
+        match self {
+            #[cfg(feature = "proto-ipv4")]
+            IpPacket::Icmpv4(_) => unreachable!(),
+            #[cfg(feature = "proto-igmp")]
+            IpPacket::Igmp(_) => unreachable!(),
+            #[cfg(feature = "proto-ipv6")]
+            IpPacket::Icmpv6(_) => SixlowpanNextHeader::Uncompressed(IpProtocol::Icmpv6),
+            #[cfg(feature = "socket-raw")]
+            IpPacket::Raw(_) => todo!(),
+            #[cfg(feature = "socket-udp")]
+            IpPacket::Udp(_) => SixlowpanNextHeader::Compressed,
+            #[cfg(feature = "socket-tcp")]
+            IpPacket::Tcp(_) => SixlowpanNextHeader::Uncompressed(IpProtocol::Tcp),
+            #[cfg(feature = "socket-dhcpv4")]
+            IpPacket::Dhcpv4(_) => unreachable!(),
+        }
+    }
+
     pub(crate) fn emit_payload(
         &self,
         _ip_repr: &IpRepr,

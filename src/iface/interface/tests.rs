@@ -22,7 +22,7 @@ const MEDIUM: Medium = Medium::Ip;
 #[cfg(all(not(feature = "medium-ethernet"), feature = "medium-ieee802154"))]
 const MEDIUM: Medium = Medium::Ieee802154;
 
-fn create<'a>(medium: Medium) -> (Interface, SocketSet<'a>, Loopback) {
+pub(crate) fn create<'a>(medium: Medium) -> (Interface, SocketSet<'a>, Loopback) {
     match medium {
         #[cfg(feature = "medium-ethernet")]
         Medium::Ethernet => create_ethernet(),
