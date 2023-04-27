@@ -262,6 +262,9 @@ pub struct InterfaceInner {
     /// When to report for (all or) the next multicast group membership via IGMP
     #[cfg(feature = "proto-igmp")]
     igmp_report_state: IgmpReportState,
+
+    #[cfg(feature = "proto-rpl")]
+    rpl: Option<super::Rpl>,
 }
 
 /// Configuration structure used for creating a network interface.
@@ -286,6 +289,10 @@ pub struct Config {
     /// **NOTE**: we use the same PAN ID for destination and source.
     #[cfg(feature = "medium-ieee802154")]
     pub pan_id: Option<Ieee802154Pan>,
+
+    /// Set the RPL configuration the interface will use, if RPL is used.
+    #[cfg(feature = "proto-rpl")]
+    pub rpl: Option<super::RplConfig>,
 }
 
 impl Config {
@@ -295,6 +302,8 @@ impl Config {
             hardware_addr,
             #[cfg(feature = "medium-ieee802154")]
             pan_id: None,
+            #[cfg(feature = "proto-rpl")]
+            rpl: None,
         }
     }
 }
@@ -563,6 +572,12 @@ impl Interface {
                 #[cfg(feature = "proto-sixlowpan")]
                 sixlowpan_address_context: Vec::new(),
                 rand,
+                #[cfg(feature = "proto-rpl")]
+                rpl: if let Some(rpl_conf) = config.rpl {
+                    Some(super::Rpl::new(rpl_conf))
+                } else {
+                    None
+                },
             },
         }
     }
@@ -1191,6 +1206,9 @@ impl InterfaceInner {
             igmp_report_state: IgmpReportState::Inactive,
             #[cfg(feature = "proto-igmp")]
             ipv4_multicast_groups: LinearMap::new(),
+
+            #[cfg(feature = "proto-rpl")]
+            rpl: None,
         }
     }
 

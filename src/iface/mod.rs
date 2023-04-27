@@ -15,9 +15,15 @@ mod rpl;
 mod socket_meta;
 mod socket_set;
 
+#[cfg(feature = "proto-rpl")]
+pub(crate) use rpl::Rpl;
+
 #[cfg(feature = "proto-igmp")]
 pub use self::interface::MulticastError;
 pub use self::interface::{Config, Interface, InterfaceInner as Context};
 
 pub use self::route::{Route, RouteTableFull, Routes};
 pub use self::socket_set::{SocketHandle, SocketSet, SocketStorage};
+
+#[cfg(feature = "proto-rpl")]
+pub use rpl::{Config as RplConfig, RootConfig as RplRootConfig};

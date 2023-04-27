@@ -49,7 +49,7 @@ defmt = [ "dep:defmt", "heapless/defmt", "heapless/defmt-impl" ]
 "proto-igmp" = ["proto-ipv4"]
 "proto-dhcpv4" = ["proto-ipv4"]
 "proto-ipv6" = []
-"proto-rpl" = []
+"proto-rpl" = ["rpl-mop-0"]
 "proto-sixlowpan" = ["proto-ipv6"]
 "proto-sixlowpan-fragmentation" = ["proto-sixlowpan", "_proto-fragmentation"]
 "proto-dns" = []
@@ -64,6 +64,11 @@ defmt = [ "dep:defmt", "heapless/defmt", "heapless/defmt-impl" ]
 "socket-mdns" = ["socket-dns"]
 
 "async" = []
+
+"rpl-mop-0" = ["proto-rpl"]
+"rpl-mop-1" = ["rpl-mop-0"]
+"rpl-mop-2" = ["rpl-mop-1"]
+"rpl-mop-3" = ["rpl-mop-2"]
 
 default = [
   "std", "log", # needed for `cargo test --no-default-features --features default` :/
