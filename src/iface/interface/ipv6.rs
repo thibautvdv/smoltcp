@@ -167,7 +167,13 @@ impl InterfaceInner {
 
             #[cfg(feature = "proto-rpl")]
             // Only process RPL packets when we actually are using RPL.
-            Icmpv6Repr::Rpl(rpl) if self.rpl.is_some() => self.process_rpl(ip_repr, rpl),
+            Icmpv6Repr::Rpl(rpl) if self.rpl.is_some() => self.process_rpl(
+                match ip_repr {
+                    IpRepr::Ipv6(ip_repr) => ip_repr,
+                    IpRepr::Ipv4(_) => unreachable!(),
+                },
+                rpl,
+            ),
 
             // FIXME: do something correct here?
             _ => None,
