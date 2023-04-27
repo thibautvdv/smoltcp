@@ -47,7 +47,11 @@ impl InterfaceInner {
             }
         };
 
-        self.process_ipv6(sockets, &check!(Ipv6Packet::new_checked(payload)))
+        self.process_ipv6(
+            sockets,
+            ieee802154_repr.src_addr.map(HardwareAddress::from),
+            &check!(Ipv6Packet::new_checked(payload)),
+        )
     }
 
     #[cfg(feature = "proto-sixlowpan-fragmentation")]
@@ -290,16 +294,16 @@ impl InterfaceInner {
         //// TODO(thvdveld): also check that we are actually using the RPL protocol.
         //#[cfg(feature = "proto-rpl")]
         //let hop_by_hop = if ip_repr.dst_addr.is_unicast() {
-            //// TODO(thvdveld): use the correct values.
-            //Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
-                //down: false,
-                //rank_error: false,
-                //forwarding_error: false,
-                //instance_id: RplInstanceId::from(0x1e),
-                //sender_rank: 0x0300,
-            //}))
+        //// TODO(thvdveld): use the correct values.
+        //Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
+        //down: false,
+        //rank_error: false,
+        //forwarding_error: false,
+        //instance_id: RplInstanceId::from(0x1e),
+        //sender_rank: 0x0300,
+        //}))
         //} else {
-            //None
+        //None
         //};
 
         #[cfg(feature = "proto-rpl")]
@@ -381,15 +385,15 @@ impl InterfaceInner {
         // TODO(thvdveld): also check that we are actually using the RPL protocol.
         //#[cfg(feature = "proto-rpl")]
         //let hop_by_hop = if ip_repr.dst_addr.is_unicast() {
-            //Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
-                //down: false,
-                //rank_error: false,
-                //forwarding_error: false,
-                //instance_id: RplInstanceId::from(0x1e),
-                //sender_rank: 0x0300,
-            //}))
+        //Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
+        //down: false,
+        //rank_error: false,
+        //forwarding_error: false,
+        //instance_id: RplInstanceId::from(0x1e),
+        //sender_rank: 0x0300,
+        //}))
         //} else {
-            //None
+        //None
         //};
 
         #[cfg(feature = "proto-rpl")]

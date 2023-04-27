@@ -15,6 +15,7 @@ impl InterfaceInner {
     pub(super) fn process_ipv6<'frame, T: AsRef<[u8]> + ?Sized>(
         &mut self,
         sockets: &mut SocketSet,
+        src_ll_addr: Option<HardwareAddress>,
         ipv6_packet: &Ipv6Packet<&'frame T>,
     ) -> Option<IpPacket<'frame>> {
         let ipv6_repr = check!(Ipv6Repr::parse(ipv6_packet));
@@ -34,6 +35,7 @@ impl InterfaceInner {
 
         self.process_nxt_hdr(
             sockets,
+            src_ll_addr,
             ipv6_repr,
             ipv6_repr.next_header,
             handled_by_raw_socket,
@@ -47,13 +49,16 @@ impl InterfaceInner {
     pub(super) fn process_nxt_hdr<'frame>(
         &mut self,
         sockets: &mut SocketSet,
+        src_ll_addr: Option<HardwareAddress>,
         ipv6_repr: Ipv6Repr,
         nxt_hdr: IpProtocol,
         handled_by_raw_socket: bool,
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
         match nxt_hdr {
-            IpProtocol::Icmpv6 => self.process_icmpv6(sockets, ipv6_repr.into(), ip_payload),
+            IpProtocol::Icmpv6 => {
+                self.process_icmpv6(sockets, src_ll_addr, ipv6_repr.into(), ip_payload)
+            }
 
             #[cfg(any(feature = "socket-udp", feature = "socket-dns"))]
             IpProtocol::Udp => {
@@ -78,9 +83,13 @@ impl InterfaceInner {
             #[cfg(feature = "socket-tcp")]
             IpProtocol::Tcp => self.process_tcp(sockets, ipv6_repr.into(), ip_payload),
 
-            IpProtocol::HopByHop => {
-                self.process_hopbyhop(sockets, ipv6_repr, handled_by_raw_socket, ip_payload)
-            }
+            IpProtocol::HopByHop => self.process_hopbyhop(
+                sockets,
+                src_ll_addr,
+                ipv6_repr,
+                handled_by_raw_socket,
+                ip_payload,
+            ),
 
             #[cfg(feature = "socket-raw")]
             _ if handled_by_raw_socket => None,
@@ -105,6 +114,7 @@ impl InterfaceInner {
     pub(super) fn process_icmpv6<'frame>(
         &mut self,
         _sockets: &mut SocketSet,
+        src_ll_addr: Option<HardwareAddress>,
         ip_repr: IpRepr,
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
@@ -168,6 +178,7 @@ impl InterfaceInner {
             #[cfg(feature = "proto-rpl")]
             // Only process RPL packets when we actually are using RPL.
             Icmpv6Repr::Rpl(rpl) if self.rpl.is_some() => self.process_rpl(
+                src_ll_addr,
                 match ip_repr {
                     IpRepr::Ipv6(ip_repr) => ip_repr,
                     IpRepr::Ipv4(_) => unreachable!(),
@@ -250,6 +261,7 @@ impl InterfaceInner {
     pub(super) fn process_hopbyhop<'frame>(
         &mut self,
         sockets: &mut SocketSet,
+        ll_src_addr: Option<HardwareAddress>,
         ipv6_repr: Ipv6Repr,
         handled_by_raw_socket: bool,
         ip_payload: &'frame [u8],
@@ -280,6 +292,7 @@ impl InterfaceInner {
         }
         self.process_nxt_hdr(
             sockets,
+            ll_src_addr,
             ipv6_repr,
             ext_hdr.next_header(),
             handled_by_raw_socket,

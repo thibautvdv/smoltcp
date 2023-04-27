@@ -6,12 +6,15 @@ use crate::wire::*;
 impl InterfaceInner {
     pub(super) fn process_rpl<'frame>(
         &mut self,
+        src_ll_addr: Option<HardwareAddress>,
         ip_repr: Ipv6Repr,
         repr: RplRepr<'frame>,
     ) -> Option<IpPacket<'frame>> {
         match repr {
             RplRepr::DodagInformationSolicitation { .. } => self.process_rpl_dis(ip_repr, repr),
-            RplRepr::DodagInformationObject { .. } => self.process_rpl_dio(ip_repr, repr),
+            RplRepr::DodagInformationObject { .. } => {
+                self.process_rpl_dio(src_ll_addr, ip_repr, repr)
+            }
             RplRepr::DestinationAdvertisementObject { .. } => {
                 net_trace!("Received DAO, which is not supported yet.");
                 None
@@ -88,6 +91,7 @@ impl InterfaceInner {
 
     pub(super) fn process_rpl_dio<'frame>(
         &mut self,
+        src_ll_addr: Option<HardwareAddress>,
         ip_repr: Ipv6Repr,
         repr: RplRepr<'frame>,
     ) -> Option<IpPacket<'frame>> {
@@ -243,8 +247,7 @@ impl InterfaceInner {
                     // neighbour table.
                     rpl.neighbors.add_neighbor(
                         neighbor_table::RplNeighbor::new(
-                            //ll_addr,
-                            Ieee802154Address::Absent.into(), // TODO(Use the correct address)
+                            src_ll_addr.unwrap(),
                             ip_repr.src_addr,
                             dio_rank.into(),
                             dodag_preference.into(),
