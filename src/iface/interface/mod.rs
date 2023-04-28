@@ -581,10 +581,17 @@ impl Interface {
         }
     }
 
-    /// Get the socket context.
+    /// Get a reference to the interface context.
     ///
     /// The context is needed for some socket methods.
-    pub fn context(&mut self) -> &mut InterfaceInner {
+    pub fn context(&self) -> &InterfaceInner {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the interface context.
+    ///
+    /// The context is needed for some socket methods.
+    pub fn context_mut(&mut self) -> &mut InterfaceInner {
         &mut self.inner
     }
 

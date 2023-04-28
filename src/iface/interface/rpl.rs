@@ -4,6 +4,14 @@ use super::super::rpl::*;
 use crate::wire::*;
 
 impl InterfaceInner {
+    pub fn rpl(&self) -> Option<&Rpl> {
+        self.rpl.as_ref()
+    }
+
+    pub fn rpl_mut(&mut self) -> Option<&mut Rpl> {
+        self.rpl.as_mut()
+    }
+
     pub(super) fn process_rpl<'frame>(
         &mut self,
         src_ll_addr: Option<HardwareAddress>,
