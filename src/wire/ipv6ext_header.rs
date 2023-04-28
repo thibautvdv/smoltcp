@@ -131,7 +131,7 @@ pub struct Repr<'a> {
 
 impl<'a> Repr<'a> {
     /// Parse an IPv6 Extension Header Header and return a high-level representation.
-    pub fn parse<T>(header: &'a Header<&'a T>) -> Result<Self>
+    pub fn parse<T>(header: &Header<&'a T>) -> Result<Self>
     where
         T: AsRef<[u8]> + ?Sized,
     {

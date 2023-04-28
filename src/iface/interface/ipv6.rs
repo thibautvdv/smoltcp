@@ -267,13 +267,51 @@ impl InterfaceInner {
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
         let ext_hdr = check!(Ipv6ExtHeader::new_checked(ip_payload));
-        let hbh_options = Ipv6OptionsIterator::new(ext_hdr.payload());
+        let hbh_repr = check!(Ipv6ExtHeaderRepr::parse(&ext_hdr));
+        let hbh_options = Ipv6OptionsIterator::new(hbh_repr.data);
         for opt_repr in hbh_options {
             let opt_repr = check!(opt_repr);
             match opt_repr {
                 Ipv6OptionRepr::Pad1 | Ipv6OptionRepr::PadN(_) => (),
                 #[cfg(feature = "proto-rpl")]
-                Ipv6OptionRepr::Rpl(_) => {}
+                Ipv6OptionRepr::Rpl(rpl_hop_by_hop) => {
+                    if let Some(rpl) = self.rpl.as_ref() {
+                        let dst = ipv6_repr.dst_addr;
+
+                        if dst.is_unicast() && !self.has_ip_addr(dst) {
+                            match rpl.mode_of_operation {
+                                crate::iface::RplModeOfOperation::NoDownwardRoutesMaintained => {
+                                    if let Some(default_route) = rpl.parent_address {
+                                        todo!();
+                                    }
+                                }
+                                #[cfg(feature = "rpl-mop-1")]
+                                crate::iface::RplModeOfOperation::NonStoringMode => {
+                                    if rpl_hop_by_hop.down {
+                                        // When we are not the root, and the packet is going down.
+                                        // Take a look at the Source Routing Header.
+                                        todo!();
+                                    } else if rpl.parent_address.is_some() {
+                                        // When we are not the root, and the packet is going up.
+                                        return Some(IpPacket::ForwardRpl((
+                                            ipv6_repr,
+                                            rpl_hop_by_hop,
+                                            &ip_payload[ext_hdr.payload().len() + 2..],
+                                        )));
+                                    } else if rpl.is_root() {
+                                        // We are the root, and the packet is goind down.
+                                        // Add the Source Routing Header.
+                                        todo!()
+                                    } else {
+                                        // We are not the root, and we don't have a parent.
+                                        // We cannot forward it.
+                                        return None;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 Ipv6OptionRepr::Unknown { type_, .. } => {
                     match Ipv6OptionFailureType::from(type_) {

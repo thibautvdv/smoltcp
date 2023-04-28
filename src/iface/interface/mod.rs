@@ -323,6 +323,7 @@ enum EthernetPacket<'a> {
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum IpPacket<'a> {
+    ForwardRpl((Ipv6Repr, RplHopByHopRepr, &'a [u8])),
     #[cfg(feature = "proto-ipv4")]
     Icmpv4((Ipv4Repr, Icmpv4Repr<'a>)),
     #[cfg(feature = "proto-igmp")]
@@ -342,6 +343,7 @@ pub(crate) enum IpPacket<'a> {
 impl<'a> IpPacket<'a> {
     pub(crate) fn ip_repr(&self) -> IpRepr {
         match self {
+            IpPacket::ForwardRpl((ipv6_repr, _, _)) => IpRepr::Ipv6(*ipv6_repr),
             #[cfg(feature = "proto-ipv4")]
             IpPacket::Icmpv4((ipv4_repr, _)) => IpRepr::Ipv4(*ipv4_repr),
             #[cfg(feature = "proto-igmp")]
@@ -362,6 +364,8 @@ impl<'a> IpPacket<'a> {
     #[cfg(feature = "proto-sixlowpan")]
     pub(crate) fn as_sixlowpan_next_header(&self) -> SixlowpanNextHeader {
         match self {
+            // TODO(thvdveld): what about other IP protocols?
+            IpPacket::ForwardRpl((_, _,  _)) => SixlowpanNextHeader::Uncompressed(IpProtocol::Icmpv6),
             #[cfg(feature = "proto-ipv4")]
             IpPacket::Icmpv4(_) => unreachable!(),
             #[cfg(feature = "proto-igmp")]
@@ -386,6 +390,7 @@ impl<'a> IpPacket<'a> {
         caps: &DeviceCapabilities,
     ) {
         match self {
+            IpPacket::ForwardRpl(_) => todo!(),
             #[cfg(feature = "proto-ipv4")]
             IpPacket::Icmpv4((_, icmpv4_repr)) => {
                 icmpv4_repr.emit(&mut Icmpv4Packet::new_unchecked(payload), &caps.checksum)

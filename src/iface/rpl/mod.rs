@@ -1,12 +1,12 @@
 #![allow(unused)]
 
-pub(crate) mod of0;
 pub(crate) mod consts;
 pub(crate) mod lollipop;
 pub(crate) mod neighbor_table;
+pub(crate) mod of0;
 pub(crate) mod rank;
-pub(crate) mod trickle;
 pub(crate) mod relations;
+pub(crate) mod trickle;
 
 use crate::time::{Duration, Instant};
 use crate::wire::{Ipv6Address, RplInstanceId, RplOptionRepr, RplRepr};
@@ -260,6 +260,10 @@ impl Rpl {
 
     pub fn rank(&self) -> rank::Rank {
         self.rank
+    }
+
+    pub fn set_dodag_id(&mut self, dodag_id: Ipv6Address) {
+        self.dodag_id = Some(dodag_id);
     }
 
     pub fn dodag_id(&self) -> Option<Ipv6Address> {

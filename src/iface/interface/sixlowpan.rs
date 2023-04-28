@@ -131,7 +131,7 @@ impl InterfaceInner {
     pub(super) fn dispatch_sixlowpan<Tx: TxToken>(
         &mut self,
         tx_token: Tx,
-        mut ip_packet: IpPacket,
+        ip_packet: IpPacket,
         ieee_repr: Ieee802154Repr,
         frag: &mut Fragmenter,
     ) {
@@ -293,9 +293,14 @@ impl InterfaceInner {
             IpRepr::Ipv6(repr) => repr,
         };
 
+        let mut payload_len = ip_repr.payload_len;
         #[cfg(feature = "proto-rpl")]
         let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            if ip_repr.dst_addr.is_unicast() {
+            if let IpPacket::ForwardRpl((_, hbh, _)) = packet {
+                let hbh = Ipv6OptionRepr::Rpl(*hbh);
+                payload_len -= hbh.buffer_len() + 2;
+                Some(hbh)
+            } else if ip_repr.dst_addr.is_unicast() {
                 Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
                     down: false,
                     rank_error: false,
@@ -383,10 +388,10 @@ impl InterfaceInner {
                     };
                     total_size += rpl_transit_info.buffer_len();
                 }
-                total_size += ip_repr.payload_len;
+                total_size += payload_len;
             }
             _ => {
-                total_size += ip_repr.payload_len;
+                total_size += payload_len;
             }
         }
 
@@ -408,7 +413,10 @@ impl InterfaceInner {
 
         #[cfg(feature = "proto-rpl")]
         let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            if ip_repr.dst_addr.is_unicast() {
+            if let IpPacket::ForwardRpl((_, mut hbh, _)) = packet {
+                hbh.sender_rank = rpl.rank.raw_value();
+                Some(Ipv6OptionRepr::Rpl(hbh))
+            } else if ip_repr.dst_addr.is_unicast() {
                 Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
                     down: false,
                     rank_error: false,
@@ -537,6 +545,8 @@ impl InterfaceInner {
             }
             #[cfg(feature = "socket-raw")]
             IpPacket::Raw((_, _raw)) => todo!(),
+
+            IpPacket::ForwardRpl((_, _, packet)) => buffer.copy_from_slice(packet),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
         }
