@@ -108,7 +108,7 @@ pub struct RootConfig {
     pub dodag_id: Ipv6Address,
 }
 
-pub(crate) struct Rpl {
+pub struct Rpl {
     pub(crate) is_root: bool,
     pub(crate) instance_id: RplInstanceId,
     pub(crate) version_number: lollipop::SequenceCounter,
@@ -241,5 +241,33 @@ impl Rpl {
             self.default_lifetime = *default_lifetime;
             self.lifetime_unit = *lifetime_unit;
         }
+    }
+
+    pub fn parent(&self) -> Option<Ipv6Address> {
+        self.parent_address
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.is_root
+    }
+
+    pub fn rank(&self) -> rank::Rank {
+        self.rank
+    }
+
+    pub fn dodag_id(&self) -> Option<Ipv6Address> {
+        self.dodag_id
+    }
+
+    pub fn instance_id(&self) -> RplInstanceId {
+        self.instance_id
+    }
+
+    pub fn version_number(&self) -> lollipop::SequenceCounter {
+        self.version_number
+    }
+
+    pub fn mode_of_operation(&self) -> ModeOfOperation {
+        self.mode_of_operation
     }
 }
