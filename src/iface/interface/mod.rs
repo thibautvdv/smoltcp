@@ -1840,13 +1840,51 @@ impl InterfaceInner {
 
         #[cfg(feature = "medium-ieee802154")]
         if matches!(self.caps.medium, Medium::Ieee802154) {
-            let (addr, tx_token) = self.lookup_hardware_addr(
-                tx_token,
-                &ip_repr.src_addr(),
-                &ip_repr.dst_addr(),
-                frag,
-            )?;
-            let addr = addr.ieee802154_or_panic();
+            // TODO(thvdveld): make the following part nicer!
+            let (addr, tx_token) = if ip_repr.dst_addr().is_multicast() {
+                (Ieee802154Address::BROADCAST, tx_token)
+            } else {
+                #[cfg(feature = "proto-rpl")]
+                {
+                    if self.rpl.is_some() {
+                        let rpl = self.rpl.as_mut().unwrap();
+                        let addr = if let Some(addr) = rpl.parent_address {
+                            if let Some((n, _)) = rpl.neighbors.get_neighbor_from_ip_addr(&addr) {
+                                n.link_layer_addr().ieee802154_or_panic()
+                            } else {
+                                unreachable!()
+                            }
+                        } else {
+                            net_trace!("No parent yet, so cannot send it.");
+                            return Err(DispatchError::NoRoute);
+                        };
+
+                        (addr, tx_token)
+                    } else {
+                        let (addr, tx_token) = self.lookup_hardware_addr(
+                            tx_token,
+                            &ip_repr.src_addr(),
+                            &ip_repr.dst_addr(),
+                            frag,
+                        )?;
+                        let addr = addr.ieee802154_or_panic();
+
+                        (addr, tx_token)
+                    }
+                }
+
+                #[cfg(not(feature = "proto-rpl"))]
+                {
+                    let (addr, tx_token) = self.lookup_hardware_addr(
+                        tx_token,
+                        &ip_repr.src_addr(),
+                        &ip_repr.dst_addr(),
+                    )?;
+                    let addr = addr.ieee802154_or_panic();
+
+                    (addr, tx_token)
+                }
+            };
 
             self.dispatch_ieee802154(addr, tx_token, packet, frag);
             return Ok(());
