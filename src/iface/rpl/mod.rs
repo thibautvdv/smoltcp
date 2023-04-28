@@ -142,6 +142,8 @@ pub struct Rpl {
     pub(crate) lifetime_unit: u16,
 
     pub(crate) grounded: bool,
+
+    pub(crate) dao_seq_number: lollipop::SequenceCounter,
 }
 
 impl Rpl {
@@ -180,6 +182,8 @@ impl Rpl {
             lifetime_unit: 60,
 
             grounded: false,
+
+            dao_seq_number: Default::default(),
         }
     }
 

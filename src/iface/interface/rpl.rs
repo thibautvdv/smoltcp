@@ -23,10 +23,7 @@ impl InterfaceInner {
             RplRepr::DodagInformationObject { .. } => {
                 self.process_rpl_dio(src_ll_addr, ip_repr, repr)
             }
-            RplRepr::DestinationAdvertisementObject { .. } => {
-                net_trace!("Received DAO, which is not supported yet.");
-                None
-            }
+            RplRepr::DestinationAdvertisementObject { .. } => self.process_rpl_dao(ip_repr, repr),
             RplRepr::DestinationAdvertisementObjectAck { .. } => {
                 net_trace!("Received DAO-ACK, which is not supported yet.");
                 None
@@ -115,6 +112,7 @@ impl InterfaceInner {
                 dodag_id,
                 options,
             } => {
+                let ipv6_addr = self.ipv6_addr().unwrap();
                 let rpl = self.rpl.as_mut().unwrap();
                 let mut dio_rank = rank::Rank::new(rank, consts::DEFAULT_MIN_HOP_RANK_INCREASE);
                 let mut ocp = None;
@@ -162,6 +160,8 @@ impl InterfaceInner {
                         _ => net_trace!("Received invalid option."),
                     }
                 }
+
+                let mut dao = None;
 
                 // We check if we can accept the DIO message:
                 // 1. The RPL instance is the same as our RPL instance.
@@ -326,6 +326,72 @@ impl InterfaceInner {
 
                                 let min = rpl.dio_timer.min_expiration();
                                 rpl.dio_timer.reset(min, *now, rand);
+
+                                // We select a new parent, so we transmit a DAO (for MOP1, MOP2 and
+                                // MOP3).
+                                #[cfg(feature = "rpl-mop-1")]
+                                {
+                                    match rpl.mode_of_operation {
+                                        ModeOfOperation::NoDownwardRoutesMaintained => (),
+                                        ModeOfOperation::NonStoringMode => {
+                                            //let mut options = heapless::Vec::new();
+                                            //options
+                                            //.push(RplOptionRepr::RplTarget {
+                                            //prefix_length: 128,
+                                            //prefix: self.ipv6_addr().unwrap(),
+                                            //})
+                                            //.unwrap();
+                                            //options
+                                            //.push(RplOptionRepr::TransitInformation {
+                                            //external: false,
+                                            //path_control: 0,
+                                            //path_sequence: self
+                                            //.rpl
+                                            //.path_sequence_number
+                                            //.value(),
+                                            //path_lifetime: 30, // FIXME: remove magic number
+                                            //parent_address: Some(
+                                            //self.rpl.parent_address.unwrap(),
+                                            //),
+                                            //})
+                                            //.unwrap();
+
+                                            // We selected a new parent (so it's new information).
+                                            //rpl.path_sequence_number.increment();
+
+                                            let icmp = Icmpv6Repr::Rpl(
+                                                RplRepr::DestinationAdvertisementObject {
+                                                    rpl_instance_id: rpl.instance_id,
+                                                    expect_ack: false,
+                                                    sequence: Default::default(), // TODO(thvdveld):
+                                                    // get this from
+                                                    // the relations
+                                                    // table.
+                                                    dodag_id: Some(rpl.dodag_id.unwrap()),
+                                                    options: &[],
+                                                },
+                                            );
+
+                                            // Selecting new parent (so new information).
+                                            rpl.dao_seq_number.increment();
+
+                                            dao = Some(IpPacket::Icmpv6((
+                                                Ipv6Repr {
+                                                    src_addr: ipv6_addr,
+                                                    dst_addr: rpl.dodag_id.unwrap(),
+                                                    next_header: IpProtocol::Icmpv6,
+                                                    payload_len: icmp.buffer_len(),
+                                                    hop_limit: 64,
+                                                },
+                                                icmp,
+                                            )));
+                                        }
+                                        #[cfg(feature = "rpl-mop-2")]
+                                        ModeOfOperation::StoringModeWithoutMulticast => todo!(),
+                                        #[cfg(feature = "rpl-mop-3")]
+                                        ModeOfOperation::StoringModeWithMulticast => todo!(),
+                                    }
+                                }
                             }
                         }
 
@@ -339,7 +405,104 @@ impl InterfaceInner {
                     }
                 }
 
-                None
+                dao
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub(super) fn process_rpl_dao<'frame>(
+        &mut self,
+        ip_repr: Ipv6Repr,
+        repr: RplRepr<'frame>,
+    ) -> Option<IpPacket<'frame>> {
+        match repr {
+            RplRepr::DestinationAdvertisementObject {
+                rpl_instance_id,
+                expect_ack,
+                sequence,
+                dodag_id,
+                options,
+            } => {
+                let rpl = self.rpl.as_mut().unwrap();
+                match rpl.mode_of_operation {
+                    ModeOfOperation::NoDownwardRoutesMaintained => {
+                        net_debug!("Received DAO message, which is not supported in MOP0");
+                        None
+                    }
+                    #[cfg(feature = "rpl-mop-1")]
+                    ModeOfOperation::NonStoringMode if rpl.is_root => {
+                        if rpl.instance_id == rpl_instance_id && rpl.dodag_id == dodag_id {
+                            let mut child_addr = None;
+                            let mut parent_addr = None;
+                            let mut path_lftime = None;
+                            let mut path_seq = None;
+
+                            let options = RplOptionsIterator::new(options);
+                            for opt in options {
+                                let opt = check!(opt);
+                                match opt {
+                                    //skip padding
+                                    RplOptionRepr::Pad1 | RplOptionRepr::PadN(_) => (),
+                                    RplOptionRepr::RplTarget {
+                                        prefix_length,
+                                        prefix,
+                                    } => {
+                                        child_addr = Some(prefix);
+                                    }
+                                    RplOptionRepr::TransitInformation {
+                                        external,
+                                        path_control,
+                                        path_sequence,
+                                        path_lifetime,
+                                        parent_address,
+                                    } => {
+                                        parent_addr = parent_address;
+                                        path_lftime = Some(path_lifetime);
+                                        path_seq = Some(path_sequence);
+                                    }
+                                    RplOptionRepr::RplTargetDescriptor { descriptor } => {
+                                        net_trace!(
+                                            "RPL Target Descriptor Option not yet supported"
+                                        );
+                                    }
+                                    _ => net_trace!("Received invalid option."),
+                                }
+                            }
+                            //Create the relation with the child and parent addresses extracted from the options
+                            if let (Some(child), Some(parent), Some(lifetime), Some(seq)) =
+                                (child_addr, parent_addr, path_lftime, path_seq)
+                            {
+                                rpl.relations.purge(self.now);
+                                rpl.relations.add_relation_checked(
+                                    &child,
+                                    crate::iface::rpl::relations::RelationInfo {
+                                        parent,
+                                        expires_at: self.now
+                                            + crate::time::Duration::from_secs(lifetime as u64),
+                                        dao_sequence:
+                                            crate::iface::rpl::lollipop::SequenceCounter::new(seq),
+                                    },
+                                );
+
+                                net_debug!("{:#?}", rpl.relations);
+                            } else {
+                                net_trace!("Invalid DAO: child or parent missing");
+                            }
+                        }
+                        None
+                    }
+                    #[cfg(feature = "rpl-mop-1")]
+                    ModeOfOperation::NonStoringMode => {
+                        //net_debug!("Forwarding DAO to default route, because MOP1 and not ROOT");
+                        net_trace!("Received DAO, which is not supported yet.");
+                        None
+                    }
+                    #[cfg(feature = "rpl-mop-2")]
+                    ModeOfOperation::StoringModeWithoutMulticast => todo!(),
+                    #[cfg(feature = "rpl-mop-3")]
+                    ModeOfOperation::StoringModeWithMulticast => todo!(),
+                }
             }
             _ => unreachable!(),
         }

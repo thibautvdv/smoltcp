@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::iface::rpl::lollipop;
 use crate::phy::ChecksumCapabilities;
 use crate::wire::*;
 
@@ -130,7 +131,7 @@ impl InterfaceInner {
     pub(super) fn dispatch_sixlowpan<Tx: TxToken>(
         &mut self,
         tx_token: Tx,
-        ip_packet: IpPacket,
+        mut ip_packet: IpPacket,
         ieee_repr: Ieee802154Repr,
         frag: &mut Fragmenter,
     ) {
@@ -163,7 +164,8 @@ impl InterfaceInner {
                     return;
                 }
 
-                self.ipv6_to_sixlowpan(&mut pkt.buffer[..], &ip_packet, &ieee_repr);
+                let payload_length = ip_packet.ip_repr().payload_len();
+                self.ipv6_to_sixlowpan(&mut pkt.buffer[..], ip_packet, &ieee_repr);
 
                 pkt.sixlowpan.ll_dst_addr = ieee_repr.dst_addr.unwrap();
                 pkt.sixlowpan.ll_src_addr = ieee_repr.src_addr.unwrap();
@@ -171,7 +173,7 @@ impl InterfaceInner {
 
                 // The datagram size that we need to set in the first fragment header is equal to the
                 // IPv6 payload length + 40.
-                pkt.sixlowpan.datagram_size = (ip_packet.ip_repr().payload_len() + 40) as u16;
+                pkt.sixlowpan.datagram_size = (payload_length + 40) as u16;
 
                 let tag = self.get_sixlowpan_fragment_tag();
                 // We save the tag for the other fragments that will be created when calling `poll`
@@ -233,7 +235,7 @@ impl InterfaceInner {
                 ieee_repr.emit(&mut ieee_packet);
                 tx_buf = &mut tx_buf[ieee_len..];
 
-                self.ipv6_to_sixlowpan(tx_buf, &ip_packet, &ieee_repr);
+                self.ipv6_to_sixlowpan(tx_buf, ip_packet, &ieee_repr);
             });
         }
     }
@@ -291,23 +293,23 @@ impl InterfaceInner {
             IpRepr::Ipv6(repr) => repr,
         };
 
-        //// TODO(thvdveld): also check that we are actually using the RPL protocol.
-        //#[cfg(feature = "proto-rpl")]
-        //let hop_by_hop = if ip_repr.dst_addr.is_unicast() {
-        //// TODO(thvdveld): use the correct values.
-        //Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
-        //down: false,
-        //rank_error: false,
-        //forwarding_error: false,
-        //instance_id: RplInstanceId::from(0x1e),
-        //sender_rank: 0x0300,
-        //}))
-        //} else {
-        //None
-        //};
-
         #[cfg(feature = "proto-rpl")]
-        let hop_by_hop: Option<Ipv6OptionRepr> = None;
+        let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
+            if ip_repr.dst_addr.is_unicast() {
+                Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
+                    down: false,
+                    rank_error: false,
+                    forwarding_error: false,
+                    instance_id: rpl.instance_id,
+                    sender_rank: rpl.rank.raw_value(),
+                }))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         #[cfg(not(feature = "proto-rpl"))]
         let hop_by_hop: Option<Ipv6OptionRepr> = None;
 
@@ -361,6 +363,28 @@ impl InterfaceInner {
 
                 total_size += udp_hdr.header_len() + payload.len();
             }
+            IpPacket::Icmpv6((_, icmpv6)) if self.rpl.is_some() => {
+                if let Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject { .. }) = icmpv6 {
+                    let ipv6_addr = self.ipv6_addr().unwrap();
+                    let rpl_target = RplOptionRepr::RplTarget {
+                        prefix_length: 128,
+                        prefix: ipv6_addr,
+                    };
+                    total_size += rpl_target.buffer_len();
+
+                    let rpl_transit_info = RplOptionRepr::TransitInformation {
+                        external: false,
+                        path_control: 0,
+                        path_sequence: lollipop::SequenceCounter::default().value(), // TODO(thvdveld): get it
+                        // from the route
+                        // information
+                        path_lifetime: 30,
+                        parent_address: self.rpl.as_ref().unwrap().parent_address,
+                    };
+                    total_size += rpl_transit_info.buffer_len();
+                }
+                total_size += ip_repr.payload_len;
+            }
             _ => {
                 total_size += ip_repr.payload_len;
             }
@@ -372,7 +396,7 @@ impl InterfaceInner {
     fn ipv6_to_sixlowpan(
         &self,
         mut buffer: &mut [u8],
-        packet: &IpPacket,
+        mut packet: IpPacket,
         ieee_repr: &Ieee802154Repr,
     ) {
         // Create the IPHC representation.
@@ -382,22 +406,23 @@ impl InterfaceInner {
             IpRepr::Ipv6(repr) => repr,
         };
 
-        // TODO(thvdveld): also check that we are actually using the RPL protocol.
-        //#[cfg(feature = "proto-rpl")]
-        //let hop_by_hop = if ip_repr.dst_addr.is_unicast() {
-        //Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
-        //down: false,
-        //rank_error: false,
-        //forwarding_error: false,
-        //instance_id: RplInstanceId::from(0x1e),
-        //sender_rank: 0x0300,
-        //}))
-        //} else {
-        //None
-        //};
-
         #[cfg(feature = "proto-rpl")]
-        let hop_by_hop: Option<Ipv6OptionRepr> = None;
+        let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
+            if ip_repr.dst_addr.is_unicast() {
+                Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
+                    down: false,
+                    rank_error: false,
+                    forwarding_error: false,
+                    instance_id: rpl.instance_id,
+                    sender_rank: rpl.rank.raw_value(),
+                }))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         #[cfg(not(feature = "proto-rpl"))]
         let hop_by_hop: Option<Ipv6OptionRepr> = None;
 
@@ -443,7 +468,43 @@ impl InterfaceInner {
         }
 
         match packet {
-            IpPacket::Icmpv6((_, icmp_repr)) => {
+            IpPacket::Icmpv6((_, mut icmp_repr)) => {
+                let mut new_options = [0u8; 64];
+                match icmp_repr {
+                    Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject {
+                        ref mut options,
+                        ..
+                    }) if self.rpl.is_some() => {
+                        let mut len = 0;
+
+                        let ipv6_addr = self.ipv6_addr().unwrap();
+                        let rpl_target = RplOptionRepr::RplTarget {
+                            prefix_length: 128,
+                            prefix: ipv6_addr,
+                        };
+                        len += rpl_target.buffer_len();
+                        rpl_target
+                            .emit(&mut RplOptionPacket::new_unchecked(&mut new_options[..len]));
+
+                        let rpl_transit_info = RplOptionRepr::TransitInformation {
+                            external: false,
+                            path_control: 0,
+                            path_sequence: lollipop::SequenceCounter::default().value(), // TODO(thvdveld): get it
+                            // from the route
+                            // information
+                            path_lifetime: 30,
+                            parent_address: self.rpl.as_ref().unwrap().parent_address,
+                        };
+                        rpl_transit_info.emit(&mut RplOptionPacket::new_unchecked(
+                            &mut new_options[len..][..rpl_transit_info.buffer_len()],
+                        ));
+                        len += rpl_transit_info.buffer_len();
+
+                        *options = &new_options[..len];
+                    }
+                    _ => (),
+                }
+
                 icmp_repr.emit(
                     &ip_repr.src_addr.into(),
                     &ip_repr.dst_addr.into(),
@@ -453,7 +514,7 @@ impl InterfaceInner {
             }
             #[cfg(feature = "socket-udp")]
             IpPacket::Udp((_, udp_repr, payload)) => {
-                let udp_repr = SixlowpanUdpNhcRepr(*udp_repr);
+                let udp_repr = SixlowpanUdpNhcRepr(udp_repr);
                 udp_repr.emit(
                     &mut SixlowpanUdpNhcPacket::new_unchecked(
                         &mut buffer[..udp_repr.header_len() + payload.len()],
