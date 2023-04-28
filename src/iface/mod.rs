@@ -26,4 +26,6 @@ pub use self::route::{Route, RouteTableFull, Routes};
 pub use self::socket_set::{SocketHandle, SocketSet, SocketStorage};
 
 #[cfg(feature = "proto-rpl")]
-pub use rpl::{Config as RplConfig, RootConfig as RplRootConfig};
+pub use rpl::{
+    Config as RplConfig, ModeOfOperation as RplModeOfOperation, RootConfig as RplRootConfig,
+};
