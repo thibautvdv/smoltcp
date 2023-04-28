@@ -6,6 +6,7 @@ pub(crate) mod lollipop;
 pub(crate) mod neighbor_table;
 pub(crate) mod rank;
 pub(crate) mod trickle;
+pub(crate) mod relations;
 
 use crate::time::{Duration, Instant};
 use crate::wire::{Ipv6Address, RplInstanceId, RplOptionRepr, RplRepr};
@@ -122,6 +123,7 @@ pub struct Rpl {
     pub(crate) dis_expiration: Instant,
 
     pub(crate) neighbors: neighbor_table::RplNeighborTable,
+    pub(crate) relations: relations::Relations,
 
     pub(crate) parent_address: Option<Ipv6Address>,
     pub(crate) parent_rank: Option<rank::Rank>,
@@ -159,6 +161,7 @@ impl Rpl {
             dis_expiration: Instant::ZERO + Duration::from_secs(5),
 
             neighbors: neighbor_table::RplNeighborTable::default(),
+            relations: relations::Relations::default(),
 
             parent_address: None,
             parent_rank: None,
