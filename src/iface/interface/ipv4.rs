@@ -304,7 +304,7 @@ impl InterfaceInner {
                 payload_len: icmp_repr.buffer_len(),
                 hop_limit: 64,
             };
-            Some(IpPacket::Icmpv4((ipv4_reply_repr, icmp_repr)))
+            Some(IpPacket::new(ipv4_reply_repr, icmp_repr))
         } else if self.is_broadcast_v4(ipv4_repr.dst_addr) {
             // Only reply to broadcasts for echo replies and not other ICMP messages
             match icmp_repr {
@@ -317,7 +317,7 @@ impl InterfaceInner {
                             payload_len: icmp_repr.buffer_len(),
                             hop_limit: 64,
                         };
-                        Some(IpPacket::Icmpv4((ipv4_reply_repr, icmp_repr)))
+                        Some(IpPacket::new(ipv4_reply_repr, icmp_repr))
                     }
                     None => None,
                 },
@@ -403,7 +403,7 @@ impl InterfaceInner {
             group_addr,
             version,
         };
-        let pkt = IpPacket::Igmp((
+        let pkt = IpPacket::new(
             Ipv4Repr {
                 src_addr: iface_addr,
                 // Send to the group being reported
@@ -414,7 +414,7 @@ impl InterfaceInner {
                 // [#183](https://github.com/m-labs/smoltcp/issues/183).
             },
             igmp_repr,
-        ));
+        );
         Some(pkt)
     }
 
@@ -425,7 +425,7 @@ impl InterfaceInner {
     ) -> Option<IpPacket<'any>> {
         self.ipv4_addr().map(|iface_addr| {
             let igmp_repr = IgmpRepr::LeaveGroup { group_addr };
-            IpPacket::Igmp((
+            IpPacket::new(
                 Ipv4Repr {
                     src_addr: iface_addr,
                     dst_addr: Ipv4Address::MULTICAST_ALL_ROUTERS,
@@ -434,7 +434,7 @@ impl InterfaceInner {
                     hop_limit: 1,
                 },
                 igmp_repr,
-            ))
+            )
         })
     }
 }

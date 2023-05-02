@@ -248,7 +248,7 @@ impl InterfaceInner {
                         hop_limit: 0xff,
                         payload_len: advert.buffer_len(),
                     };
-                    Some(IpPacket::Icmpv6((ip_repr, advert)))
+                    Some(IpPacket::new(ip_repr, advert))
                 } else {
                     None
                 }
@@ -262,7 +262,7 @@ impl InterfaceInner {
         &mut self,
         sockets: &mut SocketSet,
         ll_src_addr: Option<HardwareAddress>,
-        ipv6_repr: Ipv6Repr,
+        mut ipv6_repr: Ipv6Repr,
         handled_by_raw_socket: bool,
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
@@ -293,11 +293,12 @@ impl InterfaceInner {
                                         todo!();
                                     } else if rpl.parent_address.is_some() {
                                         // When we are not the root, and the packet is going up.
-                                        return Some(IpPacket::ForwardRpl((
+                                        ipv6_repr.next_header = hbh_repr.next_header;
+                                        ipv6_repr.payload_len -= ext_hdr.payload().len() + 2;
+                                        return Some(self.forward(
                                             ipv6_repr,
-                                            rpl_hop_by_hop,
                                             &ip_payload[ext_hdr.payload().len() + 2..],
-                                        )));
+                                        ));
                                     } else if rpl.is_root() {
                                         // We are the root, and the packet is goind down.
                                         // Add the Source Routing Header.
@@ -352,10 +353,40 @@ impl InterfaceInner {
                 payload_len: icmp_repr.buffer_len(),
                 hop_limit: 64,
             };
-            Some(IpPacket::Icmpv6((ipv6_reply_repr, icmp_repr)))
+            Some(IpPacket::new(ipv6_reply_repr, icmp_repr))
         } else {
             // Do not send any ICMP replies to a broadcast destination address.
             None
+        }
+    }
+
+    fn forward<'frame>(&self, ip_repr: Ipv6Repr, payload: &'frame [u8]) -> IpPacket<'frame> {
+        match ip_repr.next_header {
+            IpProtocol::Tcp => todo!(),
+            IpProtocol::Udp => {
+                let udp = UdpPacket::new_checked(payload).unwrap();
+                let udp_repr = UdpRepr::parse(
+                    &udp,
+                    &ip_repr.src_addr.into(),
+                    &ip_repr.dst_addr.into(),
+                    &self.checksum_caps(),
+                )
+                .unwrap();
+                IpPacket::new(ip_repr, (udp_repr, udp.payload()))
+            }
+            IpProtocol::Icmpv6 => {
+                let icmp = Icmpv6Packet::new_checked(payload).unwrap();
+                let icmp_repr = Icmpv6Repr::parse(
+                    &ip_repr.src_addr.into(),
+                    &ip_repr.dst_addr.into(),
+                    &icmp,
+                    &self.checksum_caps(),
+                )
+                .unwrap();
+
+                IpPacket::new(ip_repr, icmp_repr)
+            }
+            _ => todo!(),
         }
     }
 }

@@ -230,7 +230,7 @@ impl InterfaceInner {
                             options: &[],
                         });
 
-                        return Some(IpPacket::Icmpv6((
+                        return Some(IpPacket::new(
                             Ipv6Repr {
                                 src_addr: self.ipv6_addr().unwrap(),
                                 dst_addr: Ipv6Address::LINK_LOCAL_ALL_RPL_NODES,
@@ -239,7 +239,7 @@ impl InterfaceInner {
                                 hop_limit: 64,
                             },
                             icmp,
-                        )));
+                        ));
                     }
 
                     // Update our RPL values from the DIO message:
@@ -375,7 +375,7 @@ impl InterfaceInner {
                                             // Selecting new parent (so new information).
                                             rpl.dao_seq_number.increment();
 
-                                            dao = Some(IpPacket::Icmpv6((
+                                            dao = Some(IpPacket::new(
                                                 Ipv6Repr {
                                                     src_addr: ipv6_addr,
                                                     dst_addr: rpl.dodag_id.unwrap(),
@@ -384,7 +384,7 @@ impl InterfaceInner {
                                                     hop_limit: 64,
                                                 },
                                                 icmp,
-                                            )));
+                                            ));
                                         }
                                         #[cfg(feature = "rpl-mop-2")]
                                         ModeOfOperation::StoringModeWithoutMulticast => todo!(),

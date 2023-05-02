@@ -234,7 +234,7 @@ fn test_icmp_error_no_payload() {
         data: &NO_BYTES,
     };
 
-    let expected_repr = IpPacket::Icmpv4((
+    let expected_repr = IpPacket::new(
         Ipv4Repr {
             src_addr: Ipv4Address([0x7f, 0x00, 0x00, 0x01]),
             dst_addr: Ipv4Address([0x7f, 0x00, 0x00, 0x02]),
@@ -243,7 +243,7 @@ fn test_icmp_error_no_payload() {
             hop_limit: 64,
         },
         icmp_repr,
-    ));
+    );
 
     // Ensure that the unknown protocol triggers an error response.
     // And we correctly handle no payload.
@@ -361,7 +361,7 @@ fn test_icmp_error_port_unreachable() {
         },
         data,
     };
-    let expected_repr = IpPacket::Icmpv4((
+    let expected_repr = IpPacket::new(
         Ipv4Repr {
             src_addr: Ipv4Address([0x7f, 0x00, 0x00, 0x01]),
             dst_addr: Ipv4Address([0x7f, 0x00, 0x00, 0x02]),
@@ -370,7 +370,7 @@ fn test_icmp_error_port_unreachable() {
             hop_limit: 64,
         },
         icmp_repr,
-    ));
+    );
 
     // Ensure that the unknown protocol triggers an error response.
     // And we correctly handle no payload.
@@ -553,7 +553,7 @@ fn test_handle_ipv4_broadcast() {
         hop_limit: 64,
         payload_len: expected_icmpv4_repr.buffer_len(),
     };
-    let expected_packet = IpPacket::Icmpv4((expected_ipv4_repr, expected_icmpv4_repr));
+    let expected_packet = IpPacket::new(expected_ipv4_repr, expected_icmpv4_repr);
 
     assert_eq!(
         iface
@@ -688,7 +688,7 @@ fn test_icmp_reply_size() {
             &vec![0x2a; MAX_PAYLOAD_LEN],
             payload,
         ),
-        Some(IpPacket::Icmpv6((expected_ip_repr, expected_icmp_repr)))
+        Some(IpPacket::new(expected_ip_repr, expected_icmp_repr))
     );
 }
 
@@ -800,10 +800,10 @@ fn test_handle_valid_ndisc_request() {
         iface
             .inner
             .process_ethernet(&mut sockets, frame.into_inner(), &mut iface.fragments),
-        Some(EthernetPacket::Ip(IpPacket::Icmpv6((
+        Some(EthernetPacket::Ip(IpPacket::new(
             ipv6_expected,
             icmpv6_expected
-        ))))
+        )))
     );
 
     // Ensure the address of the requestor was entered in the cache
@@ -992,7 +992,7 @@ fn test_icmpv4_socket() {
     };
     assert_eq!(
         iface.inner.process_icmpv4(&mut sockets, ip_repr, icmp_data),
-        Some(IpPacket::Icmpv4((ipv4_reply, echo_reply)))
+        Some(IpPacket::new(ipv4_reply, echo_reply))
     );
 
     let socket = sockets.get_mut::<icmp::Socket>(socket_handle);
@@ -1094,7 +1094,7 @@ fn test_icmpv6_nxthdr_unknown() {
     // error message to be sent to the sender.
     assert_eq!(
         iface.inner.process_ipv6(&mut sockets, None, &frame),
-        Some(IpPacket::Icmpv6((reply_ipv6_repr, reply_icmp_repr)))
+        Some(IpPacket::new(reply_ipv6_repr, reply_icmp_repr))
     );
 }
 

@@ -296,11 +296,7 @@ impl InterfaceInner {
         let mut payload_len = ip_repr.payload_len;
         #[cfg(feature = "proto-rpl")]
         let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            if let IpPacket::ForwardRpl((_, hbh, _)) = packet {
-                let hbh = Ipv6OptionRepr::Rpl(*hbh);
-                payload_len -= hbh.buffer_len() + 2;
-                Some(hbh)
-            } else if ip_repr.dst_addr.is_unicast() {
+            if ip_repr.dst_addr.is_unicast() {
                 Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
                     down: false,
                     rank_error: false,
@@ -358,17 +354,17 @@ impl InterfaceInner {
                 + hbh.buffer_len();
         }
 
-        match packet {
+        match packet.payload {
             #[cfg(feature = "socket-udp")]
-            IpPacket::Udp((_, udp_hdr, payload)) => {
+            IpPayload::Udp(udp_hdr, payload) => {
                 uncompressed_hdr_size += udp_hdr.header_len();
 
-                let udp_hdr = SixlowpanUdpNhcRepr(*udp_hdr);
+                let udp_hdr = SixlowpanUdpNhcRepr(udp_hdr);
                 compressed_hdr_size += udp_hdr.header_len();
 
                 total_size += udp_hdr.header_len() + payload.len();
             }
-            IpPacket::Icmpv6((_, icmpv6)) if self.rpl.is_some() => {
+            IpPayload::Icmpv6(icmpv6) if self.rpl.is_some() => {
                 if let Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject { .. }) = icmpv6 {
                     let ipv6_addr = self.ipv6_addr().unwrap();
                     let rpl_target = RplOptionRepr::RplTarget {
@@ -413,10 +409,7 @@ impl InterfaceInner {
 
         #[cfg(feature = "proto-rpl")]
         let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            if let IpPacket::ForwardRpl((_, mut hbh, _)) = packet {
-                hbh.sender_rank = rpl.rank.raw_value();
-                Some(Ipv6OptionRepr::Rpl(hbh))
-            } else if ip_repr.dst_addr.is_unicast() {
+            if ip_repr.dst_addr.is_unicast() {
                 Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
                     down: false,
                     rank_error: false,
@@ -475,8 +468,8 @@ impl InterfaceInner {
             buffer = &mut buffer[hbh.buffer_len()..];
         }
 
-        match packet {
-            IpPacket::Icmpv6((_, mut icmp_repr)) => {
+        match packet.payload {
+            IpPayload::Icmpv6(mut icmp_repr) => {
                 let mut new_options = [0u8; 64];
                 match icmp_repr {
                     Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject {
@@ -521,7 +514,7 @@ impl InterfaceInner {
                 );
             }
             #[cfg(feature = "socket-udp")]
-            IpPacket::Udp((_, udp_repr, payload)) => {
+            IpPayload::Udp(udp_repr, payload) => {
                 let udp_repr = SixlowpanUdpNhcRepr(udp_repr);
                 udp_repr.emit(
                     &mut SixlowpanUdpNhcPacket::new_unchecked(
@@ -535,7 +528,7 @@ impl InterfaceInner {
                 );
             }
             #[cfg(feature = "socket-tcp")]
-            IpPacket::Tcp((_, tcp_repr)) => {
+            IpPayload::Tcp(tcp_repr) => {
                 tcp_repr.emit(
                     &mut TcpPacket::new_unchecked(&mut buffer[..tcp_repr.buffer_len()]),
                     &ip_repr.src_addr.into(),
@@ -544,9 +537,9 @@ impl InterfaceInner {
                 );
             }
             #[cfg(feature = "socket-raw")]
-            IpPacket::Raw((_, _raw)) => todo!(),
+            IpPayload::Raw(_raw) => todo!(),
 
-            IpPacket::ForwardRpl((_, _, packet)) => buffer.copy_from_slice(packet),
+            //IpPacket::ForwardRpl((_, _, _, packet)) => buffer.copy_from_slice(packet),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
         }
@@ -597,7 +590,7 @@ impl InterfaceInner {
                         data = &data[ext_repr.buffer_len() + ext_repr.length as usize..];
                     }
                     SixlowpanNhcPacket::UdpHeader => {
-                        let udp_packet = SixlowpanUdpNhcPacket::new_checked(iphc.payload())?;
+                        let udp_packet = SixlowpanUdpNhcPacket::new_checked(data)?;
                         let udp_repr = SixlowpanUdpNhcRepr::parse(
                             &udp_packet,
                             &iphc_repr.src_addr,
@@ -657,7 +650,8 @@ impl InterfaceInner {
 
                         let nh = match ext_repr.next_header {
                             SixlowpanNextHeader::Compressed => {
-                                let d = &ext_hdr.payload()[ext_repr.length as usize..];
+                                let d = &data[ext_repr.length as usize + ext_repr.buffer_len()..];
+                                //let d = &ext_hdr.payload()[ext_repr.length as usize..];
                                 match SixlowpanNhcPacket::dispatch(d)? {
                                     SixlowpanNhcPacket::ExtHeader => {
                                         SixlowpanExtHeaderPacket::new_checked(d)?
@@ -687,7 +681,7 @@ impl InterfaceInner {
                         data = &data[ext_repr.buffer_len() + ext_repr.length as usize..];
                     }
                     SixlowpanNhcPacket::UdpHeader => {
-                        let udp_packet = SixlowpanUdpNhcPacket::new_checked(iphc.payload())?;
+                        let udp_packet = SixlowpanUdpNhcPacket::new_checked(data)?;
                         let udp_repr = SixlowpanUdpNhcRepr::parse(
                             &udp_packet,
                             &iphc_repr.src_addr,
@@ -696,12 +690,12 @@ impl InterfaceInner {
                         )?;
 
                         let mut udp = UdpPacket::new_unchecked(
-                            &mut buffer[..udp_repr.0.header_len() + iphc.payload().len()
-                                - udp_repr.header_len()],
+                            &mut buffer
+                                [..udp_repr.0.header_len() + data.len() - udp_repr.header_len()],
                         );
-                        udp_repr.0.emit_header(&mut udp, ipv6_repr.payload_len - 8);
+                        udp_repr.0.emit_header(&mut udp, data.len() - 8);
 
-                        buffer[8..].copy_from_slice(&iphc.payload()[udp_repr.header_len()..]);
+                        buffer[8..].copy_from_slice(&data[udp_repr.header_len()..]);
                         break;
                     }
                 },
@@ -801,7 +795,7 @@ mod tests {
             src_addr: Some(Ieee802154Address::Extended([0, 3, 0, 3, 0, 3, 0, 3])),
         };
 
-        let ip_packet = IpPacket::Icmpv6((
+        let ip_packet = IpPacket::new(
             Ipv6Repr {
                 src_addr: Ipv6Address::from_bytes(&[
                     253, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0, 3, 0, 3, 0, 3,
@@ -825,7 +819,7 @@ mod tests {
                     0, 30, 253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1,
                 ],
             }),
-        ));
+        );
 
         let (total_size, _, _) = iface
             .inner
@@ -834,7 +828,7 @@ mod tests {
 
         iface
             .inner
-            .ipv6_to_sixlowpan(&mut buffer[..total_size], &ip_packet, &ieee_repr);
+            .ipv6_to_sixlowpan(&mut buffer[..total_size], ip_packet, &ieee_repr);
 
         let result = [
             0x7e, 0x0, 0xfd, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x3, 0x0, 0x3, 0x0, 0x3, 0x0,
@@ -867,7 +861,7 @@ mod tests {
             src_addr: Some(Ieee802154Address::Extended([0, 3, 0, 3, 0, 3, 0, 3])),
         };
 
-        let ip_packet = IpPacket::Icmpv6((
+        let ip_packet = IpPacket::new(
             Ipv6Repr {
                 src_addr: Ipv6Address::from_bytes(&[
                     253, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0, 3, 0, 3, 0, 3,
@@ -891,7 +885,7 @@ mod tests {
                     0, 30, 253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1,
                 ],
             }),
-        ));
+        );
 
         let (total_size, _, _) = iface
             .inner
@@ -900,7 +894,7 @@ mod tests {
 
         iface
             .inner
-            .ipv6_to_sixlowpan(&mut buffer[..total_size], &ip_packet, &ieee_repr);
+            .ipv6_to_sixlowpan(&mut buffer[..total_size], ip_packet, &ieee_repr);
 
         let result = [
             0x7e, 0x0, 0xfd, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x3, 0x0, 0x3, 0x0, 0x3, 0x0,
