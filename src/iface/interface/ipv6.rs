@@ -294,7 +294,6 @@ impl InterfaceInner {
                                     } else if rpl.parent_address.is_some() {
                                         // When we are not the root, and the packet is going up.
                                         ipv6_repr.next_header = hbh_repr.next_header;
-                                        ipv6_repr.payload_len -= ext_hdr.payload().len() + 2;
                                         return Some(self.forward(
                                             ipv6_repr,
                                             &ip_payload[ext_hdr.payload().len() + 2..],
@@ -360,7 +359,7 @@ impl InterfaceInner {
         }
     }
 
-    fn forward<'frame>(&self, ip_repr: Ipv6Repr, payload: &'frame [u8]) -> IpPacket<'frame> {
+    fn forward<'frame>(&self, mut ip_repr: Ipv6Repr, payload: &'frame [u8]) -> IpPacket<'frame> {
         match ip_repr.next_header {
             IpProtocol::Tcp => todo!(),
             IpProtocol::Udp => {
@@ -372,6 +371,8 @@ impl InterfaceInner {
                     &self.checksum_caps(),
                 )
                 .unwrap();
+                ip_repr.payload_len = udp_repr.header_len() + udp.payload().len();
+
                 IpPacket::new(ip_repr, (udp_repr, udp.payload()))
             }
             IpProtocol::Icmpv6 => {
@@ -383,6 +384,7 @@ impl InterfaceInner {
                     &self.checksum_caps(),
                 )
                 .unwrap();
+                ip_repr.payload_len = icmp_repr.buffer_len();
 
                 IpPacket::new(ip_repr, icmp_repr)
             }

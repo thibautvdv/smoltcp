@@ -485,7 +485,7 @@ impl InterfaceInner {
                                     },
                                 );
 
-                                net_debug!("{:#?}", rpl.relations);
+                                //net_debug!("{:#?}", rpl.relations);
                             } else {
                                 net_trace!("Invalid DAO: child or parent missing");
                             }

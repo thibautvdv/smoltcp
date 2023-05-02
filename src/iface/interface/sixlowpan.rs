@@ -131,14 +131,15 @@ impl InterfaceInner {
     pub(super) fn dispatch_sixlowpan<Tx: TxToken>(
         &mut self,
         tx_token: Tx,
-        ip_packet: IpPacket,
+        mut ip_packet: IpPacket,
         ieee_repr: Ieee802154Repr,
         frag: &mut Fragmenter,
     ) {
         // First we calculate the size we are going to need. If the size is bigger than the MTU,
         // then we use fragmentation.
         let (total_size, compressed_size, uncompressed_size) =
-            self.calculate_compressed_packet_size(&ip_packet, &ieee_repr);
+            self.calculate_compressed_packet_size(&mut ip_packet, &ieee_repr);
+
         let ieee_len = ieee_repr.buffer_len();
 
         // TODO(thvdveld): use the MTU of the device.
@@ -164,7 +165,12 @@ impl InterfaceInner {
                     return;
                 }
 
-                let payload_length = ip_packet.ip_repr().payload_len();
+                let mut payload_length = ip_packet.ip_repr().payload_len();
+
+                if ip_packet.repr.dst_addr().is_unicast() {
+                    payload_length += 8;
+                }
+
                 self.ipv6_to_sixlowpan(&mut pkt.buffer[..], ip_packet, &ieee_repr);
 
                 pkt.sixlowpan.ll_dst_addr = ieee_repr.dst_addr.unwrap();
@@ -280,7 +286,7 @@ impl InterfaceInner {
 
     fn calculate_compressed_packet_size(
         &self,
-        packet: &IpPacket,
+        packet: &mut IpPacket,
         ieee_repr: &Ieee802154Repr,
     ) -> (usize, usize, usize) {
         let mut total_size = 0;
@@ -364,8 +370,12 @@ impl InterfaceInner {
 
                 total_size += udp_hdr.header_len() + payload.len();
             }
-            IpPayload::Icmpv6(icmpv6) if self.rpl.is_some() => {
-                if let Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject { .. }) = icmpv6 {
+            IpPayload::Icmpv6(ref mut icmpv6) if self.rpl.is_some() => {
+                if let Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject {
+                    options, ..
+                }) = icmpv6
+                {
+                    *options = &[];
                     let ipv6_addr = self.ipv6_addr().unwrap();
                     let rpl_target = RplOptionRepr::RplTarget {
                         prefix_length: 128,
@@ -384,7 +394,7 @@ impl InterfaceInner {
                     };
                     total_size += rpl_transit_info.buffer_len();
                 }
-                total_size += payload_len;
+                total_size += icmpv6.buffer_len();
             }
             _ => {
                 total_size += payload_len;
@@ -625,6 +635,8 @@ impl InterfaceInner {
             decompressed_size
         };
 
+        let mut rest_size = total_size;
+
         let ipv6_repr = Ipv6Repr {
             src_addr: iphc_repr.src_addr,
             dst_addr: iphc_repr.dst_addr,
@@ -632,6 +644,7 @@ impl InterfaceInner {
             payload_len: total_size - 40,
             hop_limit: iphc_repr.hop_limit,
         };
+        rest_size -= 40;
 
         // Emit the decompressed IPHC header (decompressed to an IPv6 header).
         let mut ipv6_packet = Ipv6Packet::new_unchecked(&mut buffer[..ipv6_repr.buffer_len()]);
@@ -678,10 +691,12 @@ impl InterfaceInner {
                             .copy_from_slice(ext_hdr.payload());
                         buffer = &mut buffer[ipv6_ext_rpr.buffer_len() + ext_hdr.payload().len()..];
 
+                        rest_size -= ipv6_ext_rpr.buffer_len() + ext_hdr.payload().len();
                         data = &data[ext_repr.buffer_len() + ext_repr.length as usize..];
                     }
                     SixlowpanNhcPacket::UdpHeader => {
                         let udp_packet = SixlowpanUdpNhcPacket::new_checked(data)?;
+                        let payload = udp_packet.payload();
                         let udp_repr = SixlowpanUdpNhcRepr::parse(
                             &udp_packet,
                             &iphc_repr.src_addr,
@@ -689,13 +704,12 @@ impl InterfaceInner {
                             &ChecksumCapabilities::ignored(),
                         )?;
 
-                        let mut udp = UdpPacket::new_unchecked(
-                            &mut buffer
-                                [..udp_repr.0.header_len() + data.len() - udp_repr.header_len()],
-                        );
-                        udp_repr.0.emit_header(&mut udp, data.len() - 8);
+                        let mut udp = UdpPacket::new_unchecked(&mut buffer[..payload.len() + 8]);
+                        udp_repr
+                            .0
+                            .emit_header(&mut udp, rest_size - udp_repr.0.header_len()); // TODO
+                        buffer[8..][..payload.len()].copy_from_slice(payload);
 
-                        buffer[8..].copy_from_slice(&data[udp_repr.header_len()..]);
                         break;
                     }
                 },
