@@ -5,9 +5,15 @@ use super::lollipop::SequenceCounter;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub(crate) struct RelationInfo {
-    pub(crate) parent: Ipv6Address,
+    pub(crate) next_hop: Ipv6Address,
     pub(crate) expires_at: Instant,
     pub(crate) dao_sequence: SequenceCounter,
+}
+
+impl core::fmt::Display for RelationInfo {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.next_hop)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -29,13 +35,24 @@ impl Relations {
     }
 
     /// Returns the parent of a given child
-    pub fn find_parent(&self, child: &Ipv6Address) -> Option<Ipv6Address> {
-        self.relations.get(child).map(|r| r.parent)
+    pub fn find_next_hop(&self, child: &Ipv6Address) -> Option<Ipv6Address> {
+        self.relations.get(child).map(|r| r.next_hop)
     }
 
     /// Remove relations that expired.    
     pub fn purge(&mut self, now: Instant) {
         self.relations.retain(|_, r| r.expires_at > now)
+    }
+}
+
+impl core::fmt::Display for Relations {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(f, "Routing table:")?;
+        for (k, r) in &self.relations {
+            writeln!(f, "{k} -> {r}")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -62,14 +79,14 @@ mod tests {
 
         let mut relations = Relations::default();
         let rel = RelationInfo {
-            parent: addrs[1],
+            next_hop: addrs[1],
             expires_at: Instant::now(),
             dao_sequence: SequenceCounter::default(),
         };
         relations.add_relation_checked(&addrs[0], rel);
         assert!(relations.relations.contains_key(&addrs[0]));
         assert_eq!(relations.relations.get(&addrs[0]), Some(&rel));
-        assert_eq!(relations.relations.get(&addrs[0]).unwrap().parent, addrs[1]);
+        assert_eq!(relations.relations.get(&addrs[0]).unwrap().next_hop, addrs[1]);
         assert_eq!(
             relations.relations.get(&addrs[0]).unwrap().dao_sequence,
             SequenceCounter::default()
@@ -84,7 +101,7 @@ mod tests {
 
         let mut relations = Relations::default();
         let rel = RelationInfo {
-            parent: addrs[1],
+            next_hop: addrs[1],
             expires_at: Instant::now(),
             dao_sequence: SequenceCounter::default(),
         };
@@ -106,21 +123,21 @@ mod tests {
         let mut relations = Relations::default();
 
         let rel1 = RelationInfo {
-            parent: addrs[2],
+            next_hop: addrs[2],
             expires_at: Instant::now(),
             dao_sequence: SequenceCounter::default(),
         };
         let rel2 = RelationInfo {
-            parent: addrs[3],
+            next_hop: addrs[3],
             expires_at: Instant::now(),
             dao_sequence: SequenceCounter::default(),
         };
         relations.add_relation_checked(&addrs[0], rel1);
         relations.add_relation_checked(&addrs[1], rel2);
 
-        assert_eq!(relations.find_parent(&addrs[0]), Some(addrs[2]));
-        assert_eq!(relations.find_parent(&addrs[1]), Some(addrs[3]));
-        assert_eq!(relations.find_parent(&addrs[4]), None);
+        assert_eq!(relations.find_next_hop(&addrs[0]), Some(addrs[2]));
+        assert_eq!(relations.find_next_hop(&addrs[1]), Some(addrs[3]));
+        assert_eq!(relations.find_next_hop(&addrs[4]), None);
     }
 
     #[test]
@@ -130,22 +147,22 @@ mod tests {
         let mut relations = Relations::default();
 
         let rel1 = RelationInfo {
-            parent: addrs[4],
+            next_hop: addrs[4],
             expires_at: Instant::now() + Duration::from_secs(100),
             dao_sequence: SequenceCounter::default(),
         };
         let rel2 = RelationInfo {
-            parent: addrs[5],
+            next_hop: addrs[5],
             expires_at: Instant::now() + Duration::from_secs(100),
             dao_sequence: SequenceCounter::default(),
         };
         let rel3 = RelationInfo {
-            parent: addrs[6],
+            next_hop: addrs[6],
             expires_at: Instant::now() + Duration::from_secs(100),
             dao_sequence: SequenceCounter::default(),
         };
         let rel4 = RelationInfo {
-            parent: addrs[7],
+            next_hop: addrs[7],
             expires_at: Instant::now() - Duration::from_secs(100),
             dao_sequence: SequenceCounter::default(),
         };

@@ -291,17 +291,32 @@ impl InterfaceInner {
                                         // When we are not the root, and the packet is going down.
                                         // Take a look at the Source Routing Header.
                                         todo!();
-                                    } else if rpl.parent_address.is_some() {
+                                    } else if rpl.parent_address.is_some() || rpl.is_root() {
                                         // When we are not the root, and the packet is going up.
                                         ipv6_repr.next_header = hbh_repr.next_header;
                                         return Some(self.forward(
                                             ipv6_repr,
                                             &ip_payload[ext_hdr.payload().len() + 2..],
                                         ));
-                                    } else if rpl.is_root() {
-                                        // We are the root, and the packet is goind down.
-                                        // Add the Source Routing Header.
-                                        todo!()
+                                    } else {
+                                        // We are not the root, and we don't have a parent.
+                                        // We cannot forward it.
+                                        return None;
+                                    }
+                                }
+                                #[cfg(feature = "rpl-mop-2")]
+                                crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
+                                    if rpl_hop_by_hop.down {
+                                        // When we are not the root, and the packet is going down.
+                                        // Take a look at the Source Routing Header.
+                                        todo!();
+                                    } else if rpl.parent_address.is_some() || rpl.is_root() {
+                                        // When we are not the root, and the packet is going up.
+                                        ipv6_repr.next_header = hbh_repr.next_header;
+                                        return Some(self.forward(
+                                            ipv6_repr,
+                                            &ip_payload[ext_hdr.payload().len() + 2..],
+                                        ));
                                     } else {
                                         // We are not the root, and we don't have a parent.
                                         // We cannot forward it.
@@ -373,7 +388,7 @@ impl InterfaceInner {
                 .unwrap();
                 ip_repr.payload_len = udp_repr.header_len() + udp.payload().len();
 
-                IpPacket::new(ip_repr, (udp_repr, udp.payload()))
+                IpPacket::forward(ip_repr, (udp_repr, udp.payload()))
             }
             IpProtocol::Icmpv6 => {
                 let icmp = Icmpv6Packet::new_checked(payload).unwrap();
@@ -386,7 +401,7 @@ impl InterfaceInner {
                 .unwrap();
                 ip_repr.payload_len = icmp_repr.buffer_len();
 
-                IpPacket::new(ip_repr, icmp_repr)
+                IpPacket::forward(ip_repr, icmp_repr)
             }
             _ => todo!(),
         }

@@ -391,6 +391,14 @@ impl<'a> IpPacket<'a> {
         }
     }
 
+    pub(crate) fn forward(repr: impl Into<IpRepr>, payload: impl Into<IpPayload<'a>>) -> Self {
+        Self {
+            forwarding: true,
+            repr: repr.into(),
+            payload: payload.into(),
+        }
+    }
+
     pub(crate) fn ip_repr(&self) -> &IpRepr {
         &self.repr
     }

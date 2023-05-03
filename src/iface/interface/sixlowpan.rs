@@ -375,24 +375,26 @@ impl InterfaceInner {
                     options, ..
                 }) = icmpv6
                 {
-                    *options = &[];
-                    let ipv6_addr = self.ipv6_addr().unwrap();
-                    let rpl_target = RplOptionRepr::RplTarget {
-                        prefix_length: 128,
-                        prefix: ipv6_addr,
-                    };
-                    total_size += rpl_target.buffer_len();
+                    if !packet.forwarding {
+                        *options = &[];
+                        let ipv6_addr = self.ipv6_addr().unwrap();
+                        let rpl_target = RplOptionRepr::RplTarget {
+                            prefix_length: 128,
+                            prefix: ipv6_addr,
+                        };
+                        total_size += rpl_target.buffer_len();
 
-                    let rpl_transit_info = RplOptionRepr::TransitInformation {
-                        external: false,
-                        path_control: 0,
-                        path_sequence: lollipop::SequenceCounter::default().value(), // TODO(thvdveld): get it
-                        // from the route
-                        // information
-                        path_lifetime: 30,
-                        parent_address: self.rpl.as_ref().unwrap().parent_address,
-                    };
-                    total_size += rpl_transit_info.buffer_len();
+                        let rpl_transit_info = RplOptionRepr::TransitInformation {
+                            external: false,
+                            path_control: 0,
+                            path_sequence: lollipop::SequenceCounter::default().value(), // TODO(thvdveld): get it
+                            // from the route
+                            // information
+                            path_lifetime: 30,
+                            parent_address: self.rpl.as_ref().unwrap().parent_address,
+                        };
+                        total_size += rpl_transit_info.buffer_len();
+                    }
                 }
                 total_size += icmpv6.buffer_len();
             }
@@ -486,32 +488,34 @@ impl InterfaceInner {
                         ref mut options,
                         ..
                     }) if self.rpl.is_some() => {
-                        let mut len = 0;
+                        if !packet.forwarding {
+                            let mut len = 0;
 
-                        let ipv6_addr = self.ipv6_addr().unwrap();
-                        let rpl_target = RplOptionRepr::RplTarget {
-                            prefix_length: 128,
-                            prefix: ipv6_addr,
-                        };
-                        len += rpl_target.buffer_len();
-                        rpl_target
-                            .emit(&mut RplOptionPacket::new_unchecked(&mut new_options[..len]));
+                            let ipv6_addr = self.ipv6_addr().unwrap();
+                            let rpl_target = RplOptionRepr::RplTarget {
+                                prefix_length: 128,
+                                prefix: ipv6_addr,
+                            };
+                            len += rpl_target.buffer_len();
+                            rpl_target
+                                .emit(&mut RplOptionPacket::new_unchecked(&mut new_options[..len]));
 
-                        let rpl_transit_info = RplOptionRepr::TransitInformation {
-                            external: false,
-                            path_control: 0,
-                            path_sequence: lollipop::SequenceCounter::default().value(), // TODO(thvdveld): get it
-                            // from the route
-                            // information
-                            path_lifetime: 30,
-                            parent_address: self.rpl.as_ref().unwrap().parent_address,
-                        };
-                        rpl_transit_info.emit(&mut RplOptionPacket::new_unchecked(
-                            &mut new_options[len..][..rpl_transit_info.buffer_len()],
-                        ));
-                        len += rpl_transit_info.buffer_len();
+                            let rpl_transit_info = RplOptionRepr::TransitInformation {
+                                external: false,
+                                path_control: 0,
+                                path_sequence: lollipop::SequenceCounter::default().value(), // TODO(thvdveld): get it
+                                // from the route
+                                // information
+                                path_lifetime: 30,
+                                parent_address: self.rpl.as_ref().unwrap().parent_address,
+                            };
+                            rpl_transit_info.emit(&mut RplOptionPacket::new_unchecked(
+                                &mut new_options[len..][..rpl_transit_info.buffer_len()],
+                            ));
+                            len += rpl_transit_info.buffer_len();
 
-                        *options = &new_options[..len];
+                            *options = &new_options[..len];
+                        }
                     }
                     _ => (),
                 }

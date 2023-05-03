@@ -334,31 +334,6 @@ impl InterfaceInner {
                                     match rpl.mode_of_operation {
                                         ModeOfOperation::NoDownwardRoutesMaintained => (),
                                         ModeOfOperation::NonStoringMode => {
-                                            //let mut options = heapless::Vec::new();
-                                            //options
-                                            //.push(RplOptionRepr::RplTarget {
-                                            //prefix_length: 128,
-                                            //prefix: self.ipv6_addr().unwrap(),
-                                            //})
-                                            //.unwrap();
-                                            //options
-                                            //.push(RplOptionRepr::TransitInformation {
-                                            //external: false,
-                                            //path_control: 0,
-                                            //path_sequence: self
-                                            //.rpl
-                                            //.path_sequence_number
-                                            //.value(),
-                                            //path_lifetime: 30, // FIXME: remove magic number
-                                            //parent_address: Some(
-                                            //self.rpl.parent_address.unwrap(),
-                                            //),
-                                            //})
-                                            //.unwrap();
-
-                                            // We selected a new parent (so it's new information).
-                                            //rpl.path_sequence_number.increment();
-
                                             let icmp = Icmpv6Repr::Rpl(
                                                 RplRepr::DestinationAdvertisementObject {
                                                     rpl_instance_id: rpl.instance_id,
@@ -387,7 +362,34 @@ impl InterfaceInner {
                                             ));
                                         }
                                         #[cfg(feature = "rpl-mop-2")]
-                                        ModeOfOperation::StoringModeWithoutMulticast => todo!(),
+                                        ModeOfOperation::StoringModeWithoutMulticast => {
+                                            let icmp = Icmpv6Repr::Rpl(
+                                                RplRepr::DestinationAdvertisementObject {
+                                                    rpl_instance_id: rpl.instance_id,
+                                                    expect_ack: false,
+                                                    sequence: Default::default(), // TODO(thvdveld):
+                                                    // get this from
+                                                    // the relations
+                                                    // table.
+                                                    dodag_id: Some(rpl.dodag_id.unwrap()),
+                                                    options: &[],
+                                                },
+                                            );
+
+                                            // Selecting new parent (so new information).
+                                            rpl.dao_seq_number.increment();
+
+                                            dao = Some(IpPacket::new(
+                                                Ipv6Repr {
+                                                    src_addr: ipv6_addr,
+                                                    dst_addr: rpl.parent_address.unwrap(),
+                                                    next_header: IpProtocol::Icmpv6,
+                                                    payload_len: icmp.buffer_len(),
+                                                    hop_limit: 64,
+                                                },
+                                                icmp,
+                                            ));
+                                        }
                                         #[cfg(feature = "rpl-mop-3")]
                                         ModeOfOperation::StoringModeWithMulticast => todo!(),
                                     }
@@ -416,6 +418,7 @@ impl InterfaceInner {
         ip_repr: Ipv6Repr,
         repr: RplRepr<'frame>,
     ) -> Option<IpPacket<'frame>> {
+        let our_addr = self.ipv6_addr().unwrap();
         match repr {
             RplRepr::DestinationAdvertisementObject {
                 rpl_instance_id,
@@ -434,7 +437,7 @@ impl InterfaceInner {
                     ModeOfOperation::NonStoringMode if rpl.is_root => {
                         if rpl.instance_id == rpl_instance_id && rpl.dodag_id == dodag_id {
                             let mut child_addr = None;
-                            let mut parent_addr = None;
+                            let mut next_hop = None;
                             let mut path_lftime = None;
                             let mut path_seq = None;
 
@@ -457,7 +460,7 @@ impl InterfaceInner {
                                         path_lifetime,
                                         parent_address,
                                     } => {
-                                        parent_addr = parent_address;
+                                        next_hop = parent_address;
                                         path_lftime = Some(path_lifetime);
                                         path_seq = Some(path_sequence);
                                     }
@@ -471,25 +474,25 @@ impl InterfaceInner {
                             }
                             //Create the relation with the child and parent addresses extracted from the options
                             if let (Some(child), Some(parent), Some(lifetime), Some(seq)) =
-                                (child_addr, parent_addr, path_lftime, path_seq)
+                                (child_addr, next_hop, path_lftime, path_seq)
                             {
                                 rpl.relations.purge(self.now);
                                 rpl.relations.add_relation_checked(
                                     &child,
                                     crate::iface::rpl::relations::RelationInfo {
-                                        parent,
+                                        next_hop: parent,
                                         expires_at: self.now
                                             + crate::time::Duration::from_secs(lifetime as u64),
                                         dao_sequence:
                                             crate::iface::rpl::lollipop::SequenceCounter::new(seq),
                                     },
                                 );
-
-                                //net_debug!("{:#?}", rpl.relations);
                             } else {
                                 net_trace!("Invalid DAO: child or parent missing");
                             }
+                            net_debug!("{}", rpl.relations);
                         }
+
                         None
                     }
                     #[cfg(feature = "rpl-mop-1")]
@@ -499,7 +502,90 @@ impl InterfaceInner {
                         None
                     }
                     #[cfg(feature = "rpl-mop-2")]
-                    ModeOfOperation::StoringModeWithoutMulticast => todo!(),
+                    ModeOfOperation::StoringModeWithoutMulticast => {
+                        if rpl.instance_id == rpl_instance_id && rpl.dodag_id == dodag_id {
+                            let mut child_addr = None;
+                            let mut path_lftime = None;
+                            let mut path_seq = None;
+
+                            let options = RplOptionsIterator::new(options);
+                            for opt in options {
+                                let opt = check!(opt);
+                                match opt {
+                                    //skip padding
+                                    RplOptionRepr::Pad1 | RplOptionRepr::PadN(_) => (),
+                                    RplOptionRepr::RplTarget {
+                                        prefix_length,
+                                        prefix,
+                                    } => {
+                                        child_addr = Some(prefix);
+                                    }
+                                    RplOptionRepr::TransitInformation {
+                                        external,
+                                        path_control,
+                                        path_sequence,
+                                        path_lifetime,
+                                        ..
+                                    } => {
+                                        path_lftime = Some(path_lifetime);
+                                        path_seq = Some(path_sequence);
+                                    }
+                                    RplOptionRepr::RplTargetDescriptor { descriptor } => {
+                                        net_trace!(
+                                            "RPL Target Descriptor Option not yet supported"
+                                        );
+                                    }
+                                    _ => net_trace!("Received invalid option."),
+                                }
+                            }
+                            //Create the relation with the child and parent addresses extracted from the options
+                            if let (Some(child), Some(lifetime), Some(seq)) =
+                                (child_addr, path_lftime, path_seq)
+                            {
+                                rpl.relations.purge(self.now);
+                                rpl.relations.add_relation_checked(
+                                    &child,
+                                    crate::iface::rpl::relations::RelationInfo {
+                                        next_hop: ip_repr.src_addr,
+                                        expires_at: self.now
+                                            + crate::time::Duration::from_secs(lifetime as u64),
+                                        dao_sequence:
+                                            crate::iface::rpl::lollipop::SequenceCounter::new(seq),
+                                    },
+                                );
+                            } else {
+                                net_trace!("Invalid DAO: child or parent missing");
+                            }
+                            net_debug!("{} {}", ip_repr.dst_addr, rpl.relations);
+
+                            let icmp = Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject {
+                                rpl_instance_id: rpl.instance_id,
+                                expect_ack: false,
+                                sequence: Default::default(), // TODO(thvdveld):
+                                // get this from
+                                // the relations
+                                // table.
+                                dodag_id: Some(rpl.dodag_id.unwrap()),
+                                options: &[],
+                            });
+
+                            // Selecting new parent (so new information).
+                            rpl.dao_seq_number.increment();
+
+                            return Some(IpPacket::new(
+                                Ipv6Repr {
+                                    src_addr: self.ipv6_addr().unwrap(),
+                                    dst_addr: rpl.parent_address.unwrap(),
+                                    next_header: IpProtocol::Icmpv6,
+                                    payload_len: icmp.buffer_len(),
+                                    hop_limit: 64,
+                                },
+                                icmp,
+                            ));
+                        }
+
+                        None
+                    }
                     #[cfg(feature = "rpl-mop-3")]
                     ModeOfOperation::StoringModeWithMulticast => todo!(),
                 }
