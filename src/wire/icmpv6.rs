@@ -561,12 +561,22 @@ impl<T: AsRef<[u8]>> AsRef<[u8]> for Packet<T> {
 impl core::fmt::Display for Repr<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Repr::DstUnreachable { reason, header, data } => write!(f, "ICMPv6 Dst Unreachable reason={reason} header={header} data={data:0x?}"),
-            Repr::PktTooBig { mtu, header, data } => write!(f, "ICMPv6 Pkt Too Big mtu={mtu} header={header} data={data:0x?}"),
-            Repr::TimeExceeded { reason, header, data } => todo!(),
-            Repr::ParamProblem { reason, pointer, header, data } => todo!(),
-            Repr::EchoRequest { ident, seq_no, data } => todo!(),
-            Repr::EchoReply { ident, seq_no, data } => todo!(),
+            Repr::DstUnreachable {
+                reason,
+                header,
+                data,
+            } => write!(
+                f,
+                "ICMPv6 Dst Unreachable reason={reason} header={header} data={data:0x?}"
+            ),
+            Repr::PktTooBig { mtu, header, data } => write!(
+                f,
+                "ICMPv6 Pkt Too Big mtu={mtu} header={header} data={data:0x?}"
+            ),
+            Repr::TimeExceeded { .. } => todo!(),
+            Repr::ParamProblem { .. } => todo!(),
+            Repr::EchoRequest { .. } => todo!(),
+            Repr::EchoReply { .. } => todo!(),
             Repr::Ndisc(_) => todo!(),
             Repr::Mld(_) => todo!(),
             Repr::Rpl(rpl) => write!(f, "{rpl}"),
@@ -575,7 +585,7 @@ impl core::fmt::Display for Repr<'_> {
 }
 
 /// A high-level representation of an Internet Control Message Protocol version 6 packet header.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub enum Repr<'a> {

@@ -2,7 +2,7 @@ use super::rank::Rank;
 use crate::time::{Duration, Instant};
 use crate::wire::{HardwareAddress, Ipv6Address};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RplNeighborTable {
     pub(crate) neighbors: [RplNeighborEntry; super::consts::DEFAULT_RPL_NEIGHBOR_TABLE_SIZE],
@@ -145,7 +145,7 @@ impl RplNeighborTable {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum RplNeighborEntry {
     #[default]
@@ -153,7 +153,7 @@ pub(crate) enum RplNeighborEntry {
     Neighbor((RplNeighbor, Instant)),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct RplNeighbor {
     ll_addr: HardwareAddress,

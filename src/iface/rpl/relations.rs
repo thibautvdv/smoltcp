@@ -4,7 +4,7 @@ use crate::wire::Ipv6Address;
 use super::lollipop::SequenceCounter;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub(crate) struct RelationInfo {
+pub struct RelationInfo {
     pub(crate) next_hop: Ipv6Address,
     pub(crate) expires_at: Instant,
     pub(crate) dao_sequence: SequenceCounter,
@@ -16,9 +16,19 @@ impl core::fmt::Display for RelationInfo {
     }
 }
 
-#[derive(Debug, Default)]
+impl RelationInfo {
+    pub fn next_hop(&self) -> Ipv6Address {
+        self.next_hop
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Relations {
-    pub(crate) relations: heapless::FnvIndexMap<Ipv6Address, RelationInfo, 128>,
+    pub(crate) relations: heapless::FnvIndexMap<
+        Ipv6Address,
+        RelationInfo,
+        { super::consts::DEFAULT_RPL_ROUTING_TABLE_SIZE },
+    >,
 }
 
 impl Relations {
@@ -86,7 +96,10 @@ mod tests {
         relations.add_relation_checked(&addrs[0], rel);
         assert!(relations.relations.contains_key(&addrs[0]));
         assert_eq!(relations.relations.get(&addrs[0]), Some(&rel));
-        assert_eq!(relations.relations.get(&addrs[0]).unwrap().next_hop, addrs[1]);
+        assert_eq!(
+            relations.relations.get(&addrs[0]).unwrap().next_hop,
+            addrs[1]
+        );
         assert_eq!(
             relations.relations.get(&addrs[0]).unwrap().dao_sequence,
             SequenceCounter::default()

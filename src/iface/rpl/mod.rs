@@ -8,6 +8,11 @@ pub(crate) mod rank;
 pub(crate) mod relations;
 pub(crate) mod trickle;
 
+pub use lollipop::SequenceCounter;
+pub(crate) use neighbor_table::RplNeighbor;
+pub use rank::Rank;
+pub use trickle::TrickleTimer;
+
 use crate::time::{Duration, Instant};
 use crate::wire::{Ipv6Address, RplInstanceId, RplOptionRepr, RplRepr};
 
@@ -110,6 +115,7 @@ pub struct RootConfig {
     pub dodag_id: Ipv6Address,
 }
 
+#[derive(Clone)]
 pub struct Rpl {
     pub(crate) is_root: bool,
     pub(crate) instance_id: RplInstanceId,
@@ -206,7 +212,7 @@ impl Rpl {
             dodag_preference: self.preference,
             dtsn: self.dtsn.value(),
             dodag_id: self.dodag_id.unwrap(),
-            options: &[],
+            options: heapless::Vec::new(),
         }
     }
     pub fn dodag_configuration(&self) -> RplOptionRepr<'_> {
@@ -281,5 +287,13 @@ impl Rpl {
 
     pub fn mode_of_operation(&self) -> ModeOfOperation {
         self.mode_of_operation
+    }
+
+    pub fn routing(&self) -> heapless::IndexMapIter<Ipv6Address, relations::RelationInfo> {
+        self.relations.relations.iter()
+    }
+
+    pub fn dio_timer(&self) -> &trickle::TrickleTimer {
+        &self.dio_timer
     }
 }

@@ -164,6 +164,10 @@ impl TrickleTimer {
     fn i_expired(&self, now: Instant) -> bool {
         now >= self.i_exp
     }
+
+    pub fn next_expiration(&self) -> Instant {
+        self.t_exp
+    }
 }
 
 #[cfg(test)]

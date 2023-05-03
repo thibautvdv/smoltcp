@@ -134,8 +134,8 @@ impl InterfaceInner {
             .items_mut()
             .filter_map(|i| icmp::Socket::downcast_mut(&mut i.socket))
         {
-            if icmp_socket.accepts(self, &ip_repr, &icmp_repr.into()) {
-                icmp_socket.process(self, &ip_repr, &icmp_repr.into());
+            if icmp_socket.accepts(self, &ip_repr, &icmp_repr.clone().into()) {
+                icmp_socket.process(self, &ip_repr, &icmp_repr.clone().into());
                 handled_by_icmp_socket = true;
             }
         }

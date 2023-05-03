@@ -1178,7 +1178,9 @@ impl Interface {
     where
         D: Device + ?Sized,
     {
-        let dis = RplRepr::DodagInformationSolicitation { options: &[] };
+        let dis = RplRepr::DodagInformationSolicitation {
+            options: heapless::Vec::new(),
+        };
         let icmp_rpl = Icmpv6Repr::Rpl(dis);
 
         // TODO(thvdveld): remove unwrap
@@ -1213,13 +1215,11 @@ impl Interface {
     where
         D: Device + ?Sized,
     {
-        let rpl = self.inner.rpl.as_mut().unwrap();
-        let mut options = [0u8; 64];
+        let our_addr = self.ipv6_addr().unwrap();
+        let rpl = self.inner.rpl.as_mut().unwrap().clone();
+        let mut options = heapless::Vec::new();
 
-        let dodag_conf = rpl.dodag_configuration();
-        let len = dodag_conf.buffer_len();
-        dodag_conf.emit(&mut RplOptionPacket::new_unchecked(&mut options[..len]));
-        let options = &options[..len];
+        options.push(rpl.dodag_configuration()).unwrap();
 
         let dio = RplRepr::DodagInformationObject {
             rpl_instance_id: rpl.instance_id,
@@ -1236,7 +1236,7 @@ impl Interface {
 
         // TODO(thvdveld): remove unwrap
         let ipv6_repr = Ipv6Repr {
-            src_addr: self.inner.ipv6_addr().unwrap(),
+            src_addr: our_addr,
             dst_addr: Ipv6Address::LINK_LOCAL_ALL_RPL_NODES,
             next_header: IpProtocol::Icmpv6,
             payload_len: icmp_rpl.buffer_len(),
@@ -1908,9 +1908,24 @@ impl InterfaceInner {
             } else {
                 #[cfg(feature = "proto-rpl")]
                 {
-                    if self.rpl.is_some() {
-                        let rpl = self.rpl.as_mut().unwrap();
-                        let addr = if let Some(addr) = rpl.parent_address {
+                    if let Some(rpl) = &mut self.rpl {
+                        let dst = match ip_repr.dst_addr() {
+                            IpAddress::Ipv6(addr) => addr,
+                            IpAddress::Ipv4(_) => unreachable!(),
+                        };
+
+                        // 1. Get the next hop from the routing table.
+                        // 2. If the next hop is not in the routing table we forward it to our
+                        //    parent. If we don't have a parent, we don't have a route and drop the
+                        //    packet.
+                        let addr = if let Some(next_hop) = rpl.relations.find_next_hop(&dst) {
+                            rpl.neighbors
+                                .get_neighbor_from_ip_addr(&next_hop)
+                                .unwrap()
+                                .0
+                                .link_layer_addr()
+                                .ieee802154_or_panic()
+                        } else if let Some(addr) = rpl.parent_address {
                             if let Some((n, _)) = rpl.neighbors.get_neighbor_from_ip_addr(&addr) {
                                 n.link_layer_addr().ieee802154_or_panic()
                             } else {

@@ -370,34 +370,6 @@ impl InterfaceInner {
 
                 total_size += udp_hdr.header_len() + payload.len();
             }
-            IpPayload::Icmpv6(ref mut icmpv6) if self.rpl.is_some() => {
-                if let Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject {
-                    options, ..
-                }) = icmpv6
-                {
-                    if !packet.forwarding {
-                        *options = &[];
-                        let ipv6_addr = self.ipv6_addr().unwrap();
-                        let rpl_target = RplOptionRepr::RplTarget {
-                            prefix_length: 128,
-                            prefix: ipv6_addr,
-                        };
-                        total_size += rpl_target.buffer_len();
-
-                        let rpl_transit_info = RplOptionRepr::TransitInformation {
-                            external: false,
-                            path_control: 0,
-                            path_sequence: lollipop::SequenceCounter::default().value(), // TODO(thvdveld): get it
-                            // from the route
-                            // information
-                            path_lifetime: 30,
-                            parent_address: self.rpl.as_ref().unwrap().parent_address,
-                        };
-                        total_size += rpl_transit_info.buffer_len();
-                    }
-                }
-                total_size += icmpv6.buffer_len();
-            }
             _ => {
                 total_size += payload_len;
             }
@@ -416,7 +388,7 @@ impl InterfaceInner {
         let ip_repr = match packet.ip_repr() {
             #[cfg(feature = "proto-ipv4")]
             IpRepr::Ipv4(_) => unreachable!(),
-            IpRepr::Ipv6(repr) => repr,
+            IpRepr::Ipv6(repr) => repr.clone(),
         };
 
         #[cfg(feature = "proto-rpl")]
@@ -480,46 +452,8 @@ impl InterfaceInner {
             buffer = &mut buffer[hbh.buffer_len()..];
         }
 
-        match packet.payload {
-            IpPayload::Icmpv6(mut icmp_repr) => {
-                let mut new_options = [0u8; 64];
-                match icmp_repr {
-                    Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObject {
-                        ref mut options,
-                        ..
-                    }) if self.rpl.is_some() => {
-                        if !packet.forwarding {
-                            let mut len = 0;
-
-                            let ipv6_addr = self.ipv6_addr().unwrap();
-                            let rpl_target = RplOptionRepr::RplTarget {
-                                prefix_length: 128,
-                                prefix: ipv6_addr,
-                            };
-                            len += rpl_target.buffer_len();
-                            rpl_target
-                                .emit(&mut RplOptionPacket::new_unchecked(&mut new_options[..len]));
-
-                            let rpl_transit_info = RplOptionRepr::TransitInformation {
-                                external: false,
-                                path_control: 0,
-                                path_sequence: lollipop::SequenceCounter::default().value(), // TODO(thvdveld): get it
-                                // from the route
-                                // information
-                                path_lifetime: 30,
-                                parent_address: self.rpl.as_ref().unwrap().parent_address,
-                            };
-                            rpl_transit_info.emit(&mut RplOptionPacket::new_unchecked(
-                                &mut new_options[len..][..rpl_transit_info.buffer_len()],
-                            ));
-                            len += rpl_transit_info.buffer_len();
-
-                            *options = &new_options[..len];
-                        }
-                    }
-                    _ => (),
-                }
-
+        match &mut packet.payload {
+            IpPayload::Icmpv6(icmp_repr) => {
                 icmp_repr.emit(
                     &ip_repr.src_addr.into(),
                     &ip_repr.dst_addr.into(),
@@ -529,7 +463,7 @@ impl InterfaceInner {
             }
             #[cfg(feature = "socket-udp")]
             IpPayload::Udp(udp_repr, payload) => {
-                let udp_repr = SixlowpanUdpNhcRepr(udp_repr);
+                let udp_repr = SixlowpanUdpNhcRepr(*udp_repr);
                 udp_repr.emit(
                     &mut SixlowpanUdpNhcPacket::new_unchecked(
                         &mut buffer[..udp_repr.header_len() + payload.len()],
@@ -553,7 +487,6 @@ impl InterfaceInner {
             #[cfg(feature = "socket-raw")]
             IpPayload::Raw(_raw) => todo!(),
 
-            //IpPacket::ForwardRpl((_, _, _, packet)) => buffer.copy_from_slice(packet),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
         }
@@ -813,7 +746,7 @@ mod tests {
             src_addr: Some(Ieee802154Address::Extended([0, 3, 0, 3, 0, 3, 0, 3])),
         };
 
-        let ip_packet = IpPacket::new(
+        let mut ip_packet = IpPacket::new(
             Ipv6Repr {
                 src_addr: Ipv6Address::from_bytes(&[
                     253, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0, 3, 0, 3, 0, 3,
@@ -832,16 +765,17 @@ mod tests {
                 dodag_id: Some(Ipv6Address::from_bytes(&[
                     253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1,
                 ])),
-                options: &[
-                    5, 18, 0, 128, 253, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0, 3, 0, 3, 0, 3, 6, 20, 0, 0,
-                    0, 30, 253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1,
-                ],
+                //options: &[
+                //5, 18, 0, 128, 253, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0, 3, 0, 3, 0, 3, 6, 20, 0, 0,
+                //0, 30, 253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1,
+                //],
+                options: heapless::Vec::new(),
             }),
         );
 
         let (total_size, _, _) = iface
             .inner
-            .calculate_compressed_packet_size(&ip_packet, &ieee_repr);
+            .calculate_compressed_packet_size(&mut ip_packet, &ieee_repr);
         let mut buffer = vec![0u8; total_size];
 
         iface
@@ -879,14 +813,31 @@ mod tests {
             src_addr: Some(Ieee802154Address::Extended([0, 3, 0, 3, 0, 3, 0, 3])),
         };
 
-        let ip_packet = IpPacket::new(
+        let addr = Ipv6Address::from_bytes(&[253, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0, 3, 0, 3, 0, 3]);
+        let parent_address =
+            Ipv6Address::from_bytes(&[253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1]);
+
+        let mut options = heapless::Vec::new();
+        options
+            .push(RplOptionRepr::RplTarget {
+                prefix_length: 128,
+                prefix: addr,
+            })
+            .unwrap();
+        options
+            .push(RplOptionRepr::TransitInformation {
+                external: false,
+                path_control: 0,
+                path_sequence: 0,
+                path_lifetime: 30,
+                parent_address: Some(parent_address),
+            })
+            .unwrap();
+
+        let mut ip_packet = IpPacket::new(
             Ipv6Repr {
-                src_addr: Ipv6Address::from_bytes(&[
-                    253, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0, 3, 0, 3, 0, 3,
-                ]),
-                dst_addr: Ipv6Address::from_bytes(&[
-                    253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1,
-                ]),
+                src_addr: addr,
+                dst_addr: parent_address,
                 next_header: IpProtocol::Icmpv6,
                 payload_len: 66,
                 hop_limit: 64,
@@ -898,16 +849,14 @@ mod tests {
                 dodag_id: Some(Ipv6Address::from_bytes(&[
                     253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1,
                 ])),
-                options: &[
-                    5, 18, 0, 128, 253, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0, 3, 0, 3, 0, 3, 6, 20, 0, 0,
-                    0, 30, 253, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 1, 0, 1, 0, 1,
-                ],
+
+                options,
             }),
         );
 
         let (total_size, _, _) = iface
             .inner
-            .calculate_compressed_packet_size(&ip_packet, &ieee_repr);
+            .calculate_compressed_packet_size(&mut ip_packet, &ieee_repr);
         let mut buffer = vec![0u8; total_size];
 
         iface
