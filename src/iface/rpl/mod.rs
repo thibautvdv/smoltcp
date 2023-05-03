@@ -11,7 +11,7 @@ pub(crate) mod trickle;
 use crate::time::{Duration, Instant};
 use crate::wire::{Ipv6Address, RplInstanceId, RplOptionRepr, RplRepr};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModeOfOperation {
     #[cfg(feature = "rpl-mop-0")]
     NoDownwardRoutesMaintained,
@@ -56,6 +56,7 @@ impl From<ModeOfOperation> for crate::wire::rpl::ModeOfOperation {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
     pub root: Option<RootConfig>,
     pub dio_timer: trickle::TrickleTimer,
@@ -103,7 +104,7 @@ impl Config {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RootConfig {
     pub preference: u8,
     pub dodag_id: Ipv6Address,

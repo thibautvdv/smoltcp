@@ -331,51 +331,65 @@ pub struct IpPacket<'a> {
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum IpPayload<'a> {
+    #[cfg(feature = "proto-ipv4")]
     Icmpv4(Icmpv4Repr<'a>),
+    #[cfg(feature = "proto-ipv4")]
     Dhcpv4(UdpRepr, DhcpRepr<'a>),
+    #[cfg(feature = "proto-ipv6")]
     Icmpv6(Icmpv6Repr<'a>),
+    #[cfg(feature = "proto-igmp")]
     Igmp(IgmpRepr),
+    #[cfg(feature = "socket-tcp")]
     Tcp(TcpRepr<'a>),
+    #[cfg(feature = "socket-udp")]
     Udp(UdpRepr, &'a [u8]),
+    #[cfg(feature = "socket-raw")]
     Raw(&'a [u8]),
 }
 
+#[cfg(feature = "proto-ipv4")]
 impl<'a> From<Icmpv4Repr<'a>> for IpPayload<'a> {
     fn from(value: Icmpv4Repr<'a>) -> Self {
         Self::Icmpv4(value)
     }
 }
 
+#[cfg(feature = "socket-dhcpv4")]
 impl<'a> From<(UdpRepr, DhcpRepr<'a>)> for IpPayload<'a> {
     fn from(value: (UdpRepr, DhcpRepr<'a>)) -> Self {
         Self::Dhcpv4(value.0, value.1)
     }
 }
 
+#[cfg(feature = "proto-ipv6")]
 impl<'a> From<Icmpv6Repr<'a>> for IpPayload<'a> {
     fn from(value: Icmpv6Repr<'a>) -> Self {
         Self::Icmpv6(value)
     }
 }
 
+#[cfg(feature = "proto-igmp")]
 impl From<IgmpRepr> for IpPayload<'_> {
     fn from(value: IgmpRepr) -> Self {
         Self::Igmp(value)
     }
 }
 
+#[cfg(feature = "socket-tcp")]
 impl<'a> From<TcpRepr<'a>> for IpPayload<'a> {
     fn from(value: TcpRepr<'a>) -> Self {
         Self::Tcp(value)
     }
 }
 
+#[cfg(feature = "socket-udp")]
 impl<'a> From<(UdpRepr, &'a [u8])> for IpPayload<'a> {
     fn from(value: (UdpRepr, &'a [u8])) -> Self {
         Self::Udp(value.0, value.1)
     }
 }
 
+#[cfg(feature = "socket-raw")]
 impl<'a> From<&'a [u8]> for IpPayload<'a> {
     fn from(value: &'a [u8]) -> Self {
         Self::Raw(value)
@@ -1176,6 +1190,7 @@ impl Interface {
             hop_limit: 64,
         };
 
+        net_trace!("Transmitting DIS");
         if let Some(tx_token) = device.transmit(self.inner.now) {
             match self.inner.dispatch_ip(
                 tx_token,
@@ -1184,7 +1199,7 @@ impl Interface {
             ) {
                 Ok(()) => return true,
                 Err(e) => {
-                    net_debug!("Failed to send DIS: {e:?}");
+                    net_debug!("Failed to send DIS: {:?}", e);
                     return false;
                 }
             }
@@ -1228,6 +1243,7 @@ impl Interface {
             hop_limit: 64,
         };
 
+        net_trace!("Transmitting DIO");
         if let Some(tx_token) = device.transmit(self.inner.now) {
             match self.inner.dispatch_ip(
                 tx_token,
@@ -1236,7 +1252,7 @@ impl Interface {
             ) {
                 Ok(()) => return true,
                 Err(e) => {
-                    net_debug!("Failed to send DIS: {e:?}");
+                    net_debug!("Failed to send DIO: {:?}", e);
                     return false;
                 }
             }
