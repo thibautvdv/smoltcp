@@ -287,16 +287,21 @@ impl InterfaceInner {
                                 }
                                 #[cfg(feature = "rpl-mop-1")]
                                 crate::iface::RplModeOfOperation::NonStoringMode => {
-                                    todo!();
+                                    ipv6_repr.next_header = hbh_repr.next_header;
+                                    return self.forward(
+                                        ipv6_repr,
+                                        &ip_payload[ext_hdr.payload().len() + 2..],
+                                        rpl_hop_by_hop,
+                                    );
                                 }
                                 #[cfg(feature = "rpl-mop-2")]
                                 crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
                                     ipv6_repr.next_header = hbh_repr.next_header;
-                                    return Some(self.forward(
+                                    return self.forward(
                                         ipv6_repr,
                                         &ip_payload[ext_hdr.payload().len() + 2..],
                                         rpl_hop_by_hop,
-                                    ));
+                                    );
                                 }
                             }
                         }
@@ -355,25 +360,73 @@ impl InterfaceInner {
         mut ip_repr: Ipv6Repr,
         payload: &'frame [u8],
         mut hbh: RplHopByHopRepr,
-    ) -> IpPacket<'frame> {
+    ) -> Option<IpPacket<'frame>> {
         let mut to = ip_repr.dst_addr;
 
         if let Some(rpl) = &self.rpl {
             // Change the sender rank to our own rank.
             hbh.sender_rank = rpl.rank.raw_value();
 
-            // First look if we know that the destination is in our sub-tree.
-            // Otherwise, try to send it up to our parent.
-            // If we don't know if it's in our sub-tree and we don't have a parent yet, then we
-            // just leave the destination as is.
-            if let Some(nh) = rpl.relations.find_next_hop(&to) {
-                hbh.down = true;
-                to = nh;
-            } else if let Some(parent) = rpl.parent_address {
-                hbh.down = false;
-                to = parent;
-            } else {
-                net_debug!("Destination not in sub-tree, and we don't have a parent yet.");
+            match rpl.mode_of_operation {
+                #[cfg(feature = "rpl-mop-0")]
+                crate::iface::RplModeOfOperation::NoDownwardRoutesMaintained => {
+                    if let Some(parent) = rpl.parent_address {
+                        hbh.down = false;
+                        to = parent
+                    } else {
+                        net_debug!("Unable to forward, no parent yet.");
+                        return None;
+                    }
+                }
+
+                #[cfg(feature = "rpl-mop-1")]
+                crate::iface::RplModeOfOperation::NonStoringMode => {
+                    if rpl.is_root {
+                        // Look the route to be used in the source routing header.
+                        let mut route = heapless::Vec::<Ipv6Address, 32>::new();
+
+                        // The destination should be reachable in 32 hops, otherwise, we'll have an
+                        // infenite loop here.
+                        let mut next_hop = rpl.relations.find_next_hop(&to).unwrap();
+                        route.push(next_hop).unwrap();
+                        while next_hop != self.ipv6_addr().unwrap() {
+                            next_hop = rpl.relations.find_next_hop(&next_hop).unwrap();
+                            route.push(next_hop).unwrap();
+                        }
+
+                        net_debug!("{:#?}", route);
+
+                        if route.len() == 1 {
+                            // Don't use source routing header, but just transmit to the neighbor.
+                            hbh.down = true;
+                            to = ip_repr.dst_addr;
+                        } else {
+                            todo!();
+                        }
+                    } else if let Some(parent) = rpl.parent_address {
+                        hbh.down = false;
+                        to = parent
+                    } else {
+                        net_debug!("Unable to forward, no parent yet.");
+                        return None;
+                    }
+                }
+
+                #[cfg(feature = "rpl-mop-2")]
+                crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
+                    // First look if we know that the destination is in our sub-tree.
+                    // Otherwise, try to send it up to our parent.
+                    if let Some(nh) = rpl.relations.find_next_hop(&to) {
+                        hbh.down = true;
+                        to = nh;
+                    } else if let Some(parent) = rpl.parent_address {
+                        hbh.down = false;
+                        to = parent;
+                    } else {
+                        net_debug!("Destination not in sub-tree, and we don't have a parent yet.");
+                        return None;
+                    }
+                }
             }
         }
 
@@ -390,7 +443,12 @@ impl InterfaceInner {
                 .unwrap();
 
                 ip_repr.payload_len = udp_repr.header_len() + udp.payload().len();
-                IpPacket::forward(ip_repr, (udp_repr, udp.payload()), Some(to), Some(hbh))
+                Some(IpPacket::forward(
+                    ip_repr,
+                    (udp_repr, udp.payload()),
+                    Some(to),
+                    Some(hbh),
+                ))
             }
             IpProtocol::Icmpv6 => {
                 let icmp = Icmpv6Packet::new_checked(payload).unwrap();
@@ -403,7 +461,7 @@ impl InterfaceInner {
                 .unwrap();
                 ip_repr.payload_len = icmp_repr.buffer_len();
 
-                IpPacket::forward(ip_repr, icmp_repr, Some(to), Some(hbh))
+                Some(IpPacket::forward(ip_repr, icmp_repr, Some(to), Some(hbh)))
             }
             _ => todo!(),
         }
