@@ -3,6 +3,9 @@ use std::vec::Vec;
 
 use super::*;
 
+#[cfg(feature = "proto-rpl")]
+mod rpl;
+
 use crate::iface::Interface;
 use crate::phy::{ChecksumCapabilities, Loopback};
 #[cfg(feature = "proto-igmp")]

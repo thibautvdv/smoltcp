@@ -168,6 +168,27 @@ impl TrickleTimer {
     pub fn next_expiration(&self) -> Instant {
         self.t_exp
     }
+
+        #[cfg(test)]
+    pub(crate) fn get_i(&self) -> Duration {
+        self.i
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get_t(&self) -> Duration {
+        self.t
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get_counter(&self) -> usize {
+        self.counter
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_counter(&mut self, value: usize) {
+        self.counter = value;
+    }
+
 }
 
 #[cfg(test)]

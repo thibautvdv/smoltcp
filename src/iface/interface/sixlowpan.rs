@@ -56,7 +56,7 @@ impl InterfaceInner {
     }
 
     #[cfg(feature = "proto-sixlowpan-fragmentation")]
-    fn process_sixlowpan_fragment<'output, 'payload: 'output, T: AsRef<[u8]> + ?Sized>(
+    pub(super) fn process_sixlowpan_fragment<'output, 'payload: 'output, T: AsRef<[u8]> + ?Sized>(
         &mut self,
         ieee802154_repr: &Ieee802154Repr,
         payload: &'payload T,
