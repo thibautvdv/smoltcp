@@ -259,6 +259,12 @@ impl InterfaceInner {
                         self.now,
                     );
 
+                    self.neighbor_cache.fill_with_expiration(
+                        ip_repr.src_addr.into(),
+                        src_ll_addr.unwrap(),
+                        self.now + rpl.dio_timer.max_expiration(),
+                    );
+
                     // NOTE: we take twice the maximum value the DIO timer can be. This is because
                     // Contiki's Trickle timer can have a maximum value of 1.5 times of the
                     // theoretical maximum value. We didn't look into why this is in Contiki.
@@ -323,6 +329,10 @@ impl InterfaceInner {
                                 let min = rpl.dio_timer.min_expiration();
                                 rpl.dio_timer.reset(min, *now, rand);
 
+                                self.routes
+                                    .add_default_ipv6_route(preferred_parent.ip_addr())
+                                    .unwrap();
+
                                 // We select a new parent, so we transmit a DAO (for MOP1, MOP2 and
                                 // MOP3).
                                 match rpl.mode_of_operation {
@@ -334,7 +344,7 @@ impl InterfaceInner {
                                         let mut options = heapless::Vec::new();
                                         options
                                             .push(RplOptionRepr::RplTarget {
-                                                prefix_length: 128,
+                                                prefix_length: 64,
                                                 prefix: ipv6_addr,
                                             })
                                             .unwrap();
@@ -343,7 +353,7 @@ impl InterfaceInner {
                                                 external: false,
                                                 path_control: 0,
                                                 path_sequence: 0,
-                                                path_lifetime: 30,
+                                                path_lifetime: 0xff, // Should be 30
                                                 parent_address: None,
                                             })
                                             .unwrap();
@@ -427,6 +437,7 @@ impl InterfaceInner {
                             let mut child_addr = None;
                             let mut path_lftime = None;
                             let mut path_seq = None;
+                            let mut prefix_l = None;
 
                             for opt in &options {
                                 match opt {
@@ -436,6 +447,7 @@ impl InterfaceInner {
                                         prefix_length,
                                         prefix,
                                     } => {
+                                        prefix_l = Some(*prefix_length);
                                         child_addr = Some(*prefix);
                                     }
                                     RplOptionRepr::TransitInformation {
@@ -465,10 +477,8 @@ impl InterfaceInner {
                                     &child,
                                     crate::iface::rpl::relations::RelationInfo {
                                         next_hop: ip_repr.src_addr,
-                                        expires_at: self.now
-                                            + crate::time::Duration::from_secs(lifetime as u64),
-                                        dao_sequence:
-                                            crate::iface::rpl::lollipop::SequenceCounter::new(seq),
+                                        expires_at: self.now + Duration::from_secs(lifetime as u64),
+                                        dao_sequence: SequenceCounter::new(seq),
                                     },
                                 );
 
@@ -517,7 +527,6 @@ impl InterfaceInner {
                             } else {
                                 net_trace!("Invalid DAO: child or parent missing");
                             }
-                            net_debug!("{} {}", ip_repr.dst_addr, rpl.relations);
                         }
 
                         None

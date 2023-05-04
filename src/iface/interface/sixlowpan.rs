@@ -302,17 +302,7 @@ impl InterfaceInner {
         let mut payload_len = ip_repr.payload_len;
         #[cfg(feature = "proto-rpl")]
         let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            if ip_repr.dst_addr.is_unicast() {
-                Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
-                    down: false,
-                    rank_error: false,
-                    forwarding_error: false,
-                    instance_id: rpl.instance_id,
-                    sender_rank: rpl.rank.raw_value(),
-                }))
-            } else {
-                None
-            }
+            packet.hbh.map(Ipv6OptionRepr::Rpl)
         } else {
             None
         };
@@ -393,17 +383,7 @@ impl InterfaceInner {
 
         #[cfg(feature = "proto-rpl")]
         let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            if ip_repr.dst_addr.is_unicast() {
-                Some(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
-                    down: false,
-                    rank_error: false,
-                    forwarding_error: false,
-                    instance_id: rpl.instance_id,
-                    sender_rank: rpl.rank.raw_value(),
-                }))
-            } else {
-                None
-            }
+            packet.hbh.map(Ipv6OptionRepr::Rpl)
         } else {
             None
         };

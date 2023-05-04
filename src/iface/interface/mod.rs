@@ -323,7 +323,8 @@ enum EthernetPacket<'a> {
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct IpPacket<'a> {
-    forwarding: bool,
+    forwarding: Option<Ipv6Address>,
+    hbh: Option<RplHopByHopRepr>,
     repr: IpRepr,
     payload: IpPayload<'a>,
 }
@@ -399,15 +400,22 @@ impl<'a> From<&'a [u8]> for IpPayload<'a> {
 impl<'a> IpPacket<'a> {
     pub(crate) fn new(repr: impl Into<IpRepr>, payload: impl Into<IpPayload<'a>>) -> Self {
         Self {
-            forwarding: false,
+            forwarding: None,
+            hbh: None,
             repr: repr.into(),
             payload: payload.into(),
         }
     }
 
-    pub(crate) fn forward(repr: impl Into<IpRepr>, payload: impl Into<IpPayload<'a>>) -> Self {
+    pub(crate) fn forward(
+        repr: impl Into<IpRepr>,
+        payload: impl Into<IpPayload<'a>>,
+        to: Option<Ipv6Address>,
+        hbh: Option<RplHopByHopRepr>,
+    ) -> Self {
         Self {
-            forwarding: true,
+            forwarding: to,
+            hbh,
             repr: repr.into(),
             payload: payload.into(),
         }
@@ -1726,6 +1734,19 @@ impl InterfaceInner {
     }
 
     fn route(&self, addr: &IpAddress, timestamp: Instant) -> Option<IpAddress> {
+        #[cfg(feature = "proto-rpl")]
+        if self.rpl.is_some() {
+            let rpl = self.rpl.as_ref().unwrap();
+            return match (self.routes.lookup(addr, timestamp), rpl.parent_address) {
+                (None, Some(a)) => Some(a.into()),
+                (Some(a), _) => Some(a),
+                _ => {
+                    net_trace!("No route");
+                    None
+                }
+            };
+        }
+
         // Send directly.
         if self.in_same_network(addr) || addr.is_broadcast() {
             return Some(*addr);
@@ -1806,9 +1827,15 @@ impl InterfaceInner {
             return Ok((hardware_addr, tx_token));
         }
 
-        let dst_addr = self
-            .route(dst_addr, self.now)
-            .ok_or(DispatchError::NoRoute)?;
+        let dst_addr = match self.route(dst_addr, self.now) {
+            Some(addr) => addr,
+            None => {
+                net_debug!("no route for {}", dst_addr);
+                net_debug!("Current routing table is:");
+                net_debug!("{:?}", self.routes);
+                return Err(DispatchError::NoRoute);
+            }
+        };
 
         match self.neighbor_cache.lookup(&dst_addr, self.now) {
             NeighborAnswer::Found(hardware_addr) => return Ok((hardware_addr, tx_token)),
@@ -1844,6 +1871,14 @@ impl InterfaceInner {
                     net_debug!("Failed to dispatch ARP request: {:?}", e);
                     return Err(DispatchError::NeighborPending);
                 }
+            }
+
+            #[cfg(all(feature = "proto-ipv6", feature = "proto-rpl"))]
+            (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) if self.rpl.is_some() => {
+                net_debug!("address {} not in neighbor cache", dst_addr);
+                net_debug!("Current neighbor cache is:");
+                net_debug!("{:?}", self.neighbor_cache);
+                return Err(DispatchError::NeighborPending);
             }
 
             #[cfg(feature = "proto-ipv6")]
@@ -1892,83 +1927,53 @@ impl InterfaceInner {
     fn dispatch_ip<Tx: TxToken>(
         &mut self,
         tx_token: Tx,
-        packet: IpPacket,
+        mut packet: IpPacket,
         frag: &mut Fragmenter,
     ) -> Result<(), DispatchError> {
-        let ip_repr = packet.ip_repr();
-        assert!(!ip_repr.dst_addr().is_unspecified());
+        assert!(!packet.ip_repr().dst_addr().is_unspecified());
 
         // Dispatch IEEE802.15.4:
-
         #[cfg(feature = "medium-ieee802154")]
         if matches!(self.caps.medium, Medium::Ieee802154) {
-            // TODO(thvdveld): make the following part nicer!
-            let (addr, tx_token) = if ip_repr.dst_addr().is_multicast() {
-                (Ieee802154Address::BROADCAST, tx_token)
-            } else {
-                #[cfg(feature = "proto-rpl")]
-                {
-                    if let Some(rpl) = &mut self.rpl {
-                        let dst = match ip_repr.dst_addr() {
-                            IpAddress::Ipv6(addr) => addr,
-                            IpAddress::Ipv4(_) => unreachable!(),
-                        };
-
-                        // 1. Get the next hop from the routing table.
-                        // 2. If the next hop is not in the routing table we forward it to our
-                        //    parent. If we don't have a parent, we don't have a route and drop the
-                        //    packet.
-                        let addr = if let Some(next_hop) = rpl.relations.find_next_hop(&dst) {
-                            rpl.neighbors
-                                .get_neighbor_from_ip_addr(&next_hop)
-                                .unwrap()
-                                .0
-                                .link_layer_addr()
-                                .ieee802154_or_panic()
-                        } else if let Some(addr) = rpl.parent_address {
-                            if let Some((n, _)) = rpl.neighbors.get_neighbor_from_ip_addr(&addr) {
-                                n.link_layer_addr().ieee802154_or_panic()
-                            } else {
-                                unreachable!()
-                            }
-                        } else {
-                            net_trace!("No parent yet, so cannot send it.");
-                            return Err(DispatchError::NoRoute);
-                        };
-
-                        (addr, tx_token)
-                    } else {
-                        let (addr, tx_token) = self.lookup_hardware_addr(
-                            tx_token,
-                            &ip_repr.src_addr(),
-                            &ip_repr.dst_addr(),
-                            frag,
-                        )?;
-                        let addr = addr.ieee802154_or_panic();
-
-                        (addr, tx_token)
+            let (addr, tx_token) = if let Some(forward_to) = packet.forwarding {
+                match self.neighbor_cache.lookup(&forward_to.into(), self.now) {
+                    NeighborAnswer::Found(addr) => (addr, tx_token),
+                    NeighborAnswer::NotFound | NeighborAnswer::RateLimited => {
+                        return Err(DispatchError::NeighborPending)
                     }
                 }
+            } else if let Some(rpl) = &self.rpl {
+                // Add the hop-by-hop when the message is a unicast message.
+                if packet.ip_repr().dst_addr().is_unicast() {
+                    let dst = match packet.ip_repr().dst_addr() {
+                        IpAddress::Ipv4(_) => unreachable!(),
+                        IpAddress::Ipv6(addr) => addr,
+                    };
 
-                #[cfg(not(feature = "proto-rpl"))]
-                {
-                    let (addr, tx_token) = self.lookup_hardware_addr(
-                        tx_token,
-                        &ip_repr.src_addr(),
-                        &ip_repr.dst_addr(),
-                    )?;
-                    let addr = addr.ieee802154_or_panic();
-
-                    (addr, tx_token)
+                    packet.hbh = Some(RplHopByHopRepr {
+                        down: rpl.relations.find_next_hop(&dst).is_some(),
+                        rank_error: false,
+                        forwarding_error: false,
+                        instance_id: rpl.instance_id,
+                        sender_rank: rpl.rank.raw_value(),
+                    });
                 }
+
+                let ip_repr = packet.ip_repr();
+                self.lookup_hardware_addr(tx_token, &ip_repr.src_addr(), &ip_repr.dst_addr(), frag)?
+            } else {
+                let ip_repr = packet.ip_repr();
+                self.lookup_hardware_addr(tx_token, &ip_repr.src_addr(), &ip_repr.dst_addr(), frag)?
             };
+
+            let addr = addr.ieee802154_or_panic();
 
             self.dispatch_ieee802154(addr, tx_token, packet, frag);
             return Ok(());
         }
 
         // Dispatch IP/Ethernet:
-
+        let ip_repr = packet.ip_repr();
         let caps = self.caps.clone();
 
         #[cfg(feature = "proto-ipv4-fragmentation")]
@@ -2071,7 +2076,7 @@ impl InterfaceInner {
                         repr.payload_len = first_frag_ip_len - repr.buffer_len();
 
                         // Emit the IP header to the buffer.
-                        emit_ip(&ip_repr, &mut frag.buffer);
+                        emit_ip(ip_repr, &mut frag.buffer);
                         let mut ipv4_packet = Ipv4Packet::new_unchecked(&mut frag.buffer[..]);
                         frag.ipv4.ident = ipv4_id;
                         ipv4_packet.set_ident(ipv4_id);
