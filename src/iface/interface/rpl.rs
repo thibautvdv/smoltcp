@@ -472,18 +472,18 @@ impl InterfaceInner {
                         // Forward the DAO to the root, via our parent.
                         // When we are the root, we add DAO information to our routing table.
                         if !rpl.is_root {
-                            Some(IpPacket {
-                                forwarding: Some(rpl.parent_address.unwrap()),
-                                hbh: Some(RplHopByHopRepr {
+                            Some(IpPacket::forward(
+                                ip_repr,
+                                Icmpv6Repr::Rpl(repr),
+                                rpl.parent_address,
+                                Some(RplHopByHopRepr {
                                     down: false,
                                     rank_error: false,
                                     forwarding_error: false,
                                     instance_id: rpl.instance_id,
                                     sender_rank: rpl.rank.raw_value(),
                                 }),
-                                repr: ip_repr.into(),
-                                payload: IpPayload::Icmpv6(Icmpv6Repr::Rpl(repr)),
-                            })
+                            ))
                         } else {
                             let mut child_addr = None;
                             let mut path_lftime = None;

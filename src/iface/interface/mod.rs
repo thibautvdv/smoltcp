@@ -324,6 +324,7 @@ enum EthernetPacket<'a> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct IpPacket<'a> {
     forwarding: Option<Ipv6Address>,
+    routing: Option<Ipv6RoutingRepr>,
     hbh: Option<RplHopByHopRepr>,
     repr: IpRepr,
     payload: IpPayload<'a>,
@@ -401,6 +402,7 @@ impl<'a> IpPacket<'a> {
     pub(crate) fn new(repr: impl Into<IpRepr>, payload: impl Into<IpPayload<'a>>) -> Self {
         Self {
             forwarding: None,
+            routing: None,
             hbh: None,
             repr: repr.into(),
             payload: payload.into(),
@@ -415,6 +417,7 @@ impl<'a> IpPacket<'a> {
     ) -> Self {
         Self {
             forwarding: to,
+            routing: None,
             hbh,
             repr: repr.into(),
             payload: payload.into(),

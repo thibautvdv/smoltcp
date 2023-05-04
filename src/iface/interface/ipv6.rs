@@ -91,6 +91,14 @@ impl InterfaceInner {
                 ip_payload,
             ),
 
+            IpProtocol::Ipv6Route => self.process_routing(
+                sockets,
+                src_ll_addr,
+                ipv6_repr,
+                handled_by_raw_socket,
+                ip_payload,
+            ),
+
             #[cfg(feature = "socket-raw")]
             _ if handled_by_raw_socket => None,
 
@@ -333,6 +341,40 @@ impl InterfaceInner {
         )
     }
 
+    pub(super) fn process_routing<'frame>(
+        &mut self,
+        sockets: &mut SocketSet,
+        ll_src_addr: Option<HardwareAddress>,
+        mut ipv6_repr: Ipv6Repr,
+        handled_by_raw_socket: bool,
+        ip_payload: &'frame [u8],
+    ) -> Option<IpPacket<'frame>> {
+        let ext_hdr = check!(Ipv6ExtHeader::new_checked(ip_payload));
+        let hbh_repr = check!(Ipv6ExtHeaderRepr::parse(&ext_hdr));
+
+        let routing_header = check!(Ipv6RoutingHeader::new_checked(ext_hdr.payload()));
+        let routing_repr = match check!(Ipv6RoutingRepr::parse(&routing_header)) {
+            Ipv6RoutingRepr::Type2 { .. } => {
+                net_debug!("IPv6 Type2 routing header not supported yet, dropping packet.");
+                todo!("We should respond with a ICMPv6 unkown protocol.");
+                return None;
+            }
+            rpl @ Ipv6RoutingRepr::Rpl { .. } => {
+                net_debug!("{rpl:?}");
+                todo!();
+            }
+        };
+
+        self.process_nxt_hdr(
+            sockets,
+            ll_src_addr,
+            ipv6_repr,
+            ext_hdr.next_header(),
+            handled_by_raw_socket,
+            &ip_payload[ext_hdr.payload().len() + 2..],
+        )
+    }
+
     #[cfg(feature = "proto-ipv6")]
     pub(super) fn icmpv6_reply<'frame, 'icmp: 'frame>(
         &self,
@@ -363,6 +405,8 @@ impl InterfaceInner {
     ) -> Option<IpPacket<'frame>> {
         let mut to = ip_repr.dst_addr;
 
+        let mut routing = None;
+
         if let Some(rpl) = &self.rpl {
             // Change the sender rank to our own rank.
             hbh.sender_rank = rpl.rank.raw_value();
@@ -387,21 +431,42 @@ impl InterfaceInner {
 
                         // The destination should be reachable in 32 hops, otherwise, we'll have an
                         // infenite loop here.
-                        let mut next_hop = rpl.relations.find_next_hop(&to).unwrap();
-                        route.push(next_hop).unwrap();
-                        while next_hop != self.ipv6_addr().unwrap() {
+                        let mut next_hop = ip_repr.dst_addr;
+                        loop {
                             next_hop = rpl.relations.find_next_hop(&next_hop).unwrap();
-                            route.push(next_hop).unwrap();
+                            if next_hop == self.ipv6_addr().unwrap() {
+                                break;
+                            } else {
+                                route.push(next_hop).unwrap();
+                            }
                         }
 
-                        net_debug!("{:#?}", route);
-
-                        if route.len() == 1 {
+                        if route.is_empty() {
                             // Don't use source routing header, but just transmit to the neighbor.
                             hbh.down = true;
                             to = ip_repr.dst_addr;
                         } else {
-                            todo!();
+                            to = *route.last().unwrap();
+
+                            let len = route.len();
+                            let route = &route[..len - 1];
+                            let mut addresses = heapless::Vec::new();
+
+                            for addr in route.iter().rev() {
+                                addresses.push(*addr).unwrap();
+                            }
+
+                            net_debug!("{:#?}", route);
+                            net_debug!("{:#?}", addresses);
+
+                            // Add the source routing option to the packet.
+                            routing = Some(Ipv6RoutingRepr::Rpl {
+                                segments_left: route.len() as u8 + 1,
+                                cmpr_i: 0,
+                                cmpr_e: 0,
+                                pad: 0,
+                                addresses,
+                            });
                         }
                     } else if let Some(parent) = rpl.parent_address {
                         hbh.down = false;
@@ -443,12 +508,10 @@ impl InterfaceInner {
                 .unwrap();
 
                 ip_repr.payload_len = udp_repr.header_len() + udp.payload().len();
-                Some(IpPacket::forward(
-                    ip_repr,
-                    (udp_repr, udp.payload()),
-                    Some(to),
-                    Some(hbh),
-                ))
+                let mut packet =
+                    IpPacket::forward(ip_repr, (udp_repr, udp.payload()), Some(to), Some(hbh));
+                packet.routing = routing;
+                Some(packet)
             }
             IpProtocol::Icmpv6 => {
                 let icmp = Icmpv6Packet::new_checked(payload).unwrap();
@@ -461,7 +524,10 @@ impl InterfaceInner {
                 .unwrap();
                 ip_repr.payload_len = icmp_repr.buffer_len();
 
-                Some(IpPacket::forward(ip_repr, icmp_repr, Some(to), Some(hbh)))
+                let mut packet = IpPacket::forward(ip_repr, icmp_repr, Some(to), Some(hbh));
+                packet.routing = routing;
+
+                Some(packet)
             }
             _ => todo!(),
         }

@@ -56,7 +56,11 @@ impl InterfaceInner {
     }
 
     #[cfg(feature = "proto-sixlowpan-fragmentation")]
-    pub(super) fn process_sixlowpan_fragment<'output, 'payload: 'output, T: AsRef<[u8]> + ?Sized>(
+    pub(super) fn process_sixlowpan_fragment<
+        'output,
+        'payload: 'output,
+        T: AsRef<[u8]> + ?Sized,
+    >(
         &mut self,
         ieee802154_repr: &Ieee802154Repr,
         payload: &'payload T,
@@ -300,9 +304,14 @@ impl InterfaceInner {
         };
 
         let mut payload_len = ip_repr.payload_len;
+
         #[cfg(feature = "proto-rpl")]
         let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            packet.hbh.map(Ipv6OptionRepr::Rpl)
+            if packet.routing.is_none() {
+                packet.hbh.map(Ipv6OptionRepr::Rpl)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -317,7 +326,7 @@ impl InterfaceInner {
             ll_src_addr: ieee_repr.src_addr,
             dst_addr: ip_repr.dst_addr,
             ll_dst_addr: ieee_repr.dst_addr,
-            next_header: if hop_by_hop.is_some() {
+            next_header: if packet.routing.is_some() || hop_by_hop.is_some() {
                 SixlowpanNextHeader::Compressed
             } else {
                 next_header
@@ -331,6 +340,23 @@ impl InterfaceInner {
         total_size += iphc.buffer_len();
         compressed_hdr_size += iphc.buffer_len();
         uncompressed_hdr_size += ip_repr.buffer_len();
+
+        if let Some(routing) = &packet.routing {
+            let ext_hdr = SixlowpanExtHeaderRepr {
+                ext_header_id: SixlowpanExtHeaderId::RoutingHeader,
+                next_header,
+                length: routing.buffer_len() as u8,
+            };
+            total_size += ext_hdr.buffer_len() + routing.buffer_len();
+            compressed_hdr_size += ext_hdr.buffer_len() + routing.buffer_len();
+            uncompressed_hdr_size += Ipv6ExtHeaderRepr {
+                next_header: ip_repr.next_header,
+                length: ext_hdr.length / 8,
+                data: &[],
+            }
+            .buffer_len()
+                + routing.buffer_len();
+        }
 
         // Add the hop-by-hop to the sizes.
         if let Some(hbh) = hop_by_hop {
@@ -383,7 +409,11 @@ impl InterfaceInner {
 
         #[cfg(feature = "proto-rpl")]
         let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            packet.hbh.map(Ipv6OptionRepr::Rpl)
+            if packet.routing.is_none() {
+                packet.hbh.map(Ipv6OptionRepr::Rpl)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -398,7 +428,7 @@ impl InterfaceInner {
             ll_src_addr: ieee_repr.src_addr,
             dst_addr: ip_repr.dst_addr,
             ll_dst_addr: ieee_repr.dst_addr,
-            next_header: if hop_by_hop.is_some() {
+            next_header: if packet.routing.is_some() || hop_by_hop.is_some() {
                 SixlowpanNextHeader::Compressed
             } else {
                 next_header
@@ -413,6 +443,24 @@ impl InterfaceInner {
             &mut buffer[..iphc_repr.buffer_len()],
         ));
         buffer = &mut buffer[iphc_repr.buffer_len()..];
+
+        // Emit the Hop-by-Hop header, required for RPL
+        if let Some(routing) = &packet.routing {
+            let ext_hdr = SixlowpanExtHeaderRepr {
+                ext_header_id: SixlowpanExtHeaderId::RoutingHeader,
+                next_header,
+                length: routing.buffer_len() as u8,
+            };
+            ext_hdr.emit(&mut SixlowpanExtHeaderPacket::new_unchecked(
+                &mut buffer[..ext_hdr.buffer_len()],
+            ));
+            buffer = &mut buffer[ext_hdr.buffer_len()..];
+
+            routing.emit(&mut Ipv6RoutingHeader::new_unchecked(
+                &mut buffer[..routing.buffer_len()],
+            ));
+            buffer = &mut buffer[routing.buffer_len()..];
+        }
 
         // Emit the Hop-by-Hop header, required for RPL
         if let Some(hbh) = hop_by_hop {
