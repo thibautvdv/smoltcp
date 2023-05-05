@@ -391,10 +391,12 @@ impl Repr {
                     let j = i % 16;
                     buffer[j] = *b;
 
-                    if i % 16 == 0 {
+                    if i % 16 == 0 && i != 0 {
                         addresses.push(Address::from_bytes(&buffer)).unwrap();
                     }
                 }
+
+                addresses.push(Address::from_bytes(&buffer)).unwrap();
 
                 Ok(Repr::Rpl {
                     segments_left: header.segments_left(),
@@ -452,6 +454,7 @@ impl Repr {
                     buffer[len..][..16].copy_from_slice(addr.as_bytes());
                     len += 16;
                 }
+                dbg!(&buffer[..len]);
 
                 header.set_addresses(&buffer[..len]);
             }
