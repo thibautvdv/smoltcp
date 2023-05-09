@@ -16,7 +16,7 @@ mod socket_meta;
 mod socket_set;
 
 #[cfg(feature = "proto-rpl")]
-pub(crate) use rpl::Rpl;
+pub(crate) use rpl::RplInstance;
 
 #[cfg(feature = "proto-igmp")]
 pub use self::interface::MulticastError;

@@ -267,7 +267,10 @@ pub struct InterfaceInner {
     igmp_report_state: IgmpReportState,
 
     #[cfg(feature = "proto-rpl")]
-    rpl: Option<super::Rpl>,
+    rpl: super::RplInstance,
+
+    rpl_parent_set: super::rpl::neighbor_table::ParentSet,
+    relations: super::rpl::relations::Relations,
 }
 
 /// Configuration structure used for creating a network interface.
@@ -643,7 +646,9 @@ impl Interface {
                 sixlowpan_address_context: Vec::new(),
                 rand,
                 #[cfg(feature = "proto-rpl")]
-                rpl: config.rpl.map(super::Rpl::new),
+                rpl: super::RplInstance::new(config.rpl.unwrap()),
+                rpl_parent_set: Default::default(),
+                relations: Default::default(),
             },
         }
     }
@@ -840,9 +845,7 @@ impl Interface {
         }
 
         #[cfg(feature = "proto-rpl")]
-        if self.inner.rpl.is_some() {
-            self.poll_rpl(device);
-        }
+        self.poll_rpl(device);
 
         let mut readiness_may_have_changed = false;
 
@@ -883,11 +886,7 @@ impl Interface {
         }
 
         #[cfg(feature = "proto-rpl")]
-        let min = if self.inner.rpl.is_some() {
-            Some(self.poll_at_rpl())
-        } else {
-            None
-        };
+        let min = Some(self.poll_at_rpl());
 
         #[cfg(not(feature = "proto-rpl"))]
         let min = None;
@@ -934,7 +933,6 @@ impl Interface {
         D: Device + ?Sized,
     {
         let InterfaceInner { rpl, now, rand, .. } = &mut self.inner;
-        let rpl = rpl.as_mut().unwrap();
 
         if rpl.has_parent()
             && rpl.parent_last_heard.unwrap_or(*now) < *now - rpl.dio_timer.max_expiration() * 2
@@ -963,7 +961,8 @@ impl Interface {
 
     #[cfg(feature = "proto-rpl")]
     pub fn poll_at_rpl(&mut self) -> Instant {
-        let rpl = self.inner.rpl.as_ref().unwrap();
+        let InterfaceInner { rpl, .. } = &mut self.inner;
+
         if rpl.has_parent() || rpl.is_root {
             rpl.dio_timer.poll_at()
         } else {
@@ -1227,30 +1226,19 @@ impl Interface {
         D: Device + ?Sized,
     {
         let our_addr = self.ipv6_addr().unwrap();
-        let rpl = self.inner.rpl.as_mut().unwrap().clone();
-        let mut options = heapless::Vec::new();
 
+        let InterfaceInner { rpl, .. } = &mut self.inner;
+
+        let mut options = heapless::Vec::new();
         options.push(rpl.dodag_configuration()).unwrap();
 
-        let dio = RplRepr::DodagInformationObject {
-            rpl_instance_id: rpl.instance_id,
-            version_number: rpl.version_number.value(),
-            rank: rpl.rank.raw_value(),
-            grounded: rpl.grounded,
-            mode_of_operation: rpl.mode_of_operation.into(),
-            dodag_preference: rpl.preference,
-            dtsn: rpl.dtsn.value(),
-            dodag_id: rpl.dodag_id.unwrap(),
-            options,
-        };
-        let icmp_rpl = Icmpv6Repr::Rpl(dio);
+        let icmp = Icmpv6Repr::Rpl(rpl.dodag_information_object(options));
 
-        // TODO(thvdveld): remove unwrap
         let ipv6_repr = Ipv6Repr {
             src_addr: our_addr,
             dst_addr: Ipv6Address::LINK_LOCAL_ALL_RPL_NODES,
             next_header: IpProtocol::Icmpv6,
-            payload_len: icmp_rpl.buffer_len(),
+            payload_len: icmp.buffer_len(),
             hop_limit: 64,
         };
 
@@ -1258,7 +1246,7 @@ impl Interface {
         if let Some(tx_token) = device.transmit(self.inner.now) {
             match self.inner.dispatch_ip(
                 tx_token,
-                IpPacket::new(ipv6_repr, icmp_rpl),
+                IpPacket::new(ipv6_repr, icmp),
                 &mut self.fragmenter,
             ) {
                 Ok(()) => return true,
@@ -1738,17 +1726,14 @@ impl InterfaceInner {
 
     fn route(&self, addr: &IpAddress, timestamp: Instant) -> Option<IpAddress> {
         #[cfg(feature = "proto-rpl")]
-        if self.rpl.is_some() {
-            let rpl = self.rpl.as_ref().unwrap();
-            return match (self.routes.lookup(addr, timestamp), rpl.parent_address) {
-                (None, Some(a)) => Some(a.into()),
-                (Some(a), _) => Some(a),
-                _ => {
-                    net_trace!("No route");
-                    None
-                }
-            };
-        }
+        return match (self.routes.lookup(addr, timestamp), self.rpl.parent_address) {
+            (None, Some(a)) => Some(a.into()),
+            (Some(a), _) => Some(a),
+            _ => {
+                net_trace!("No route");
+                None
+            }
+        };
 
         // Send directly.
         if self.in_same_network(addr) || addr.is_broadcast() {
@@ -1877,14 +1862,14 @@ impl InterfaceInner {
             }
 
             #[cfg(all(feature = "proto-ipv6", feature = "proto-rpl"))]
-            (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) if self.rpl.is_some() => {
+            (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) => {
                 net_debug!("address {} not in neighbor cache", dst_addr);
                 net_debug!("Current neighbor cache is:");
                 net_debug!("{:?}", self.neighbor_cache);
                 return Err(DispatchError::NeighborPending);
             }
 
-            #[cfg(feature = "proto-ipv6")]
+            #[cfg(all(feature = "proto-ipv6", not(feature = "proto-rpl")))]
             (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) => {
                 net_debug!(
                     "address {} not in neighbor cache, sending Neighbor Solicitation",
@@ -1945,28 +1930,44 @@ impl InterfaceInner {
                         return Err(DispatchError::NeighborPending)
                     }
                 }
-            } else if let Some(rpl) = &self.rpl {
-                // Add the hop-by-hop when the message is a unicast message.
-                if packet.ip_repr().dst_addr().is_unicast() {
-                    let dst = match packet.ip_repr().dst_addr() {
-                        IpAddress::Ipv4(_) => unreachable!(),
-                        IpAddress::Ipv6(addr) => addr,
-                    };
+            } else {
+                #[cfg(feature = "proto-rpl")]
+                {
+                    // Add the hop-by-hop when the message is a unicast message.
+                    if packet.ip_repr().dst_addr().is_unicast() {
+                        let dst = match packet.ip_repr().dst_addr() {
+                            IpAddress::Ipv4(_) => unreachable!(),
+                            IpAddress::Ipv6(addr) => addr,
+                        };
 
-                    packet.hbh = Some(RplHopByHopRepr {
-                        down: rpl.relations.find_next_hop(&dst).is_some(),
-                        rank_error: false,
-                        forwarding_error: false,
-                        instance_id: rpl.instance_id,
-                        sender_rank: rpl.rank.raw_value(),
-                    });
+                        packet.hbh = Some(RplHopByHopRepr {
+                            down: self.relations.find_next_hop(&dst).is_some(),
+                            rank_error: false,
+                            forwarding_error: false,
+                            instance_id: self.rpl.instance_id,
+                            sender_rank: self.rpl.rank.raw_value(),
+                        });
+                    }
+
+                    let ip_repr = packet.ip_repr();
+                    self.lookup_hardware_addr(
+                        tx_token,
+                        &ip_repr.src_addr(),
+                        &ip_repr.dst_addr(),
+                        frag,
+                    )?
                 }
 
-                let ip_repr = packet.ip_repr();
-                self.lookup_hardware_addr(tx_token, &ip_repr.src_addr(), &ip_repr.dst_addr(), frag)?
-            } else {
-                let ip_repr = packet.ip_repr();
-                self.lookup_hardware_addr(tx_token, &ip_repr.src_addr(), &ip_repr.dst_addr(), frag)?
+                #[cfg(not(feature = "proto-rpl"))]
+                {
+                    let ip_repr = packet.ip_repr();
+                    self.lookup_hardware_addr(
+                        tx_token,
+                        &ip_repr.src_addr(),
+                        &ip_repr.dst_addr(),
+                        frag,
+                    )?
+                }
             };
 
             let addr = addr.ieee802154_or_panic();

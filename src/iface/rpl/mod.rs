@@ -9,9 +9,10 @@ pub(crate) mod relations;
 pub(crate) mod trickle;
 
 pub use lollipop::SequenceCounter;
-pub(crate) use neighbor_table::RplNeighbor;
+pub(crate) use neighbor_table::Parent;
 pub use rank::Rank;
 pub use trickle::TrickleTimer;
+pub(crate) use relations::RelationInfo;
 
 use crate::time::{Duration, Instant};
 use crate::wire::{Ipv6Address, RplInstanceId, RplOptionRepr, RplRepr};
@@ -115,8 +116,8 @@ pub struct RootConfig {
     pub dodag_id: Ipv6Address,
 }
 
-#[derive(Clone)]
-pub struct Rpl {
+#[derive(Debug, Clone)]
+pub struct RplInstance {
     pub(crate) is_root: bool,
     pub(crate) instance_id: RplInstanceId,
     pub(crate) version_number: lollipop::SequenceCounter,
@@ -128,9 +129,6 @@ pub struct Rpl {
 
     pub(crate) dio_timer: trickle::TrickleTimer,
     pub(crate) dis_expiration: Instant,
-
-    pub(crate) neighbors: neighbor_table::RplNeighborTable,
-    pub(crate) relations: relations::Relations,
 
     pub(crate) parent_address: Option<Ipv6Address>,
     pub(crate) parent_rank: Option<rank::Rank>,
@@ -153,7 +151,7 @@ pub struct Rpl {
     pub(crate) dao_seq_number: lollipop::SequenceCounter,
 }
 
-impl Rpl {
+impl RplInstance {
     pub fn new(config: Config) -> Self {
         Self {
             is_root: config.root.is_some(),
@@ -168,9 +166,6 @@ impl Rpl {
             dio_timer: config.dio_timer,
             // TODO(thvdveld): we want to have it differently.
             dis_expiration: Instant::ZERO + Duration::from_secs(5),
-
-            neighbors: neighbor_table::RplNeighborTable::default(),
-            relations: relations::Relations::default(),
 
             parent_address: None,
             parent_rank: None,
@@ -202,7 +197,10 @@ impl Rpl {
         !self.has_parent() && !self.is_root && now >= self.dis_expiration
     }
 
-    pub fn dodag_information_object(&self) -> RplRepr {
+    pub fn dodag_information_object<'option>(
+        &self,
+        options: heapless::Vec<RplOptionRepr<'option>, 2>,
+    ) -> RplRepr<'option> {
         RplRepr::DodagInformationObject {
             rpl_instance_id: self.instance_id,
             version_number: self.version_number.value(),
@@ -212,10 +210,11 @@ impl Rpl {
             dodag_preference: self.preference,
             dtsn: self.dtsn.value(),
             dodag_id: self.dodag_id.unwrap(),
-            options: heapless::Vec::new(),
+            options,
         }
     }
-    pub fn dodag_configuration(&self) -> RplOptionRepr<'_> {
+
+    pub fn dodag_configuration<'option>(&self) -> RplOptionRepr<'option> {
         RplOptionRepr::DodagConfiguration {
             authentication_enabled: self.authentication_enabled,
             path_control_size: self.path_contral_size,
@@ -257,6 +256,20 @@ impl Rpl {
         }
     }
 
+    pub fn destination_advertisement_object<'option>(
+        &self,
+        sequence: lollipop::SequenceCounter,
+        options: heapless::Vec<RplOptionRepr<'option>, 2>,
+    ) -> RplRepr<'option> {
+        RplRepr::DestinationAdvertisementObject {
+            rpl_instance_id: self.instance_id,
+            expect_ack: false, // Make the expect-ack configureable.
+            sequence: sequence.value(),
+            dodag_id: Some(self.dodag_id.unwrap()),
+            options,
+        }
+    }
+
     pub fn parent(&self) -> Option<Ipv6Address> {
         self.parent_address
     }
@@ -287,10 +300,6 @@ impl Rpl {
 
     pub fn mode_of_operation(&self) -> ModeOfOperation {
         self.mode_of_operation
-    }
-
-    pub fn routing(&self) -> heapless::IndexMapIter<Ipv6Address, relations::RelationInfo> {
-        self.relations.relations.iter()
     }
 
     pub fn dio_timer(&self) -> &trickle::TrickleTimer {

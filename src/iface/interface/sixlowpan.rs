@@ -306,12 +306,8 @@ impl InterfaceInner {
         let mut payload_len = ip_repr.payload_len;
 
         #[cfg(feature = "proto-rpl")]
-        let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            if packet.routing.is_none() {
-                packet.hbh.map(Ipv6OptionRepr::Rpl)
-            } else {
-                None
-            }
+        let hop_by_hop = if packet.routing.is_none() {
+            packet.hbh.map(Ipv6OptionRepr::Rpl)
         } else {
             None
         };
@@ -408,12 +404,8 @@ impl InterfaceInner {
         };
 
         #[cfg(feature = "proto-rpl")]
-        let hop_by_hop = if let Some(rpl) = self.rpl.as_ref() {
-            if packet.routing.is_none() {
-                packet.hbh.map(Ipv6OptionRepr::Rpl)
-            } else {
-                None
-            }
+        let hop_by_hop = if packet.routing.is_none() {
+            packet.hbh.map(Ipv6OptionRepr::Rpl)
         } else {
             None
         };

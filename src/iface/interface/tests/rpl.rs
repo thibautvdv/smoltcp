@@ -184,7 +184,7 @@ fn rpl_root_node(mop: ModeOfOperation) -> (Interface, SocketSet<'static>, TestDe
         preference: 0,
         dodag_id: ip_addr(ROOT_ADDRESS),
     });
-    iface.context_mut().rpl = Some(Rpl::new(rpl_config));
+    iface.context_mut().rpl = Some(RplInstance::new(rpl_config));
 
     if let Some(rpl) = iface.context_mut().rpl_mut() {
         rpl.mode_of_operation = mop;
@@ -204,7 +204,7 @@ fn rpl_connected_node(
 
     let mut rpl_config = RplConfig::default();
     rpl_config.mode_of_operation = mop;
-    iface.context_mut().rpl = Some(Rpl::new(rpl_config));
+    iface.context_mut().rpl = Some(RplInstance::new(rpl_config));
 
     iface.set_hardware_addr(HardwareAddress::Ieee802154(addr));
     iface.update_ip_addrs(|a| a[0] = IpCidr::Ipv6(Ipv6Cidr::new(ip_addr(addr), 128)));
@@ -235,7 +235,7 @@ fn rpl_unconnected_node(
 
     let mut rpl_config = RplConfig::default();
     rpl_config.mode_of_operation = mop;
-    iface.context_mut().rpl = Some(Rpl::new(rpl_config));
+    iface.context_mut().rpl = Some(RplInstance::new(rpl_config));
 
     iface.set_hardware_addr(HardwareAddress::Ieee802154(addr));
     iface.update_ip_addrs(|a| a[0] = IpCidr::Ipv6(Ipv6Cidr::new(ip_addr(addr), 128)));

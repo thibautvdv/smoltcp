@@ -9,5 +9,5 @@ pub const DEFAULT_DIO_INTERVAL_DOUBLINGS: u32 = 8;
 
 pub const DEFAULT_RPL_INSTANCE_ID: u8 = 0x1e; 
 
-pub const DEFAULT_RPL_NEIGHBOR_TABLE_SIZE: usize = 16;
+pub const DEFAULT_RPL_PARENT_SET_SIZE: usize = 16;
 pub const DEFAULT_RPL_ROUTING_TABLE_SIZE: usize = 32;

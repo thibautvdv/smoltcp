@@ -185,7 +185,7 @@ impl InterfaceInner {
 
             #[cfg(feature = "proto-rpl")]
             // Only process RPL packets when we actually are using RPL.
-            Icmpv6Repr::Rpl(rpl) if self.rpl.is_some() => self.process_rpl(
+            Icmpv6Repr::Rpl(rpl) => self.process_rpl(
                 src_ll_addr,
                 match ip_repr {
                     IpRepr::Ipv6(ip_repr) => ip_repr,
@@ -283,36 +283,34 @@ impl InterfaceInner {
                 Ipv6OptionRepr::Pad1 | Ipv6OptionRepr::PadN(_) => (),
                 #[cfg(feature = "proto-rpl")]
                 Ipv6OptionRepr::Rpl(rpl_hop_by_hop) => {
-                    if let Some(rpl) = self.rpl.as_ref() {
-                        let dst = ipv6_repr.dst_addr;
+                    let dst = ipv6_repr.dst_addr;
 
-                        if dst.is_unicast() && !self.has_ip_addr(dst) {
-                            match rpl.mode_of_operation {
-                                crate::iface::RplModeOfOperation::NoDownwardRoutesMaintained => {
-                                    if let Some(default_route) = rpl.parent_address {
-                                        todo!();
-                                    }
+                    if dst.is_unicast() && !self.has_ip_addr(dst) {
+                        match self.rpl.mode_of_operation {
+                            crate::iface::RplModeOfOperation::NoDownwardRoutesMaintained => {
+                                if let Some(default_route) = self.rpl.parent_address {
+                                    todo!();
                                 }
-                                #[cfg(feature = "rpl-mop-1")]
-                                crate::iface::RplModeOfOperation::NonStoringMode => {
-                                    ipv6_repr.next_header = hbh_repr.next_header;
-                                    return self.forward(
-                                        ipv6_repr,
-                                        &ip_payload[ext_hdr.payload().len() + 2..],
-                                        None,
-                                        Some(rpl_hop_by_hop),
-                                    );
-                                }
-                                #[cfg(feature = "rpl-mop-2")]
-                                crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
-                                    ipv6_repr.next_header = hbh_repr.next_header;
-                                    return self.forward(
-                                        ipv6_repr,
-                                        &ip_payload[ext_hdr.payload().len() + 2..],
-                                        None,
-                                        Some(rpl_hop_by_hop),
-                                    );
-                                }
+                            }
+                            #[cfg(feature = "rpl-mop-1")]
+                            crate::iface::RplModeOfOperation::NonStoringMode => {
+                                ipv6_repr.next_header = hbh_repr.next_header;
+                                return self.forward(
+                                    ipv6_repr,
+                                    &ip_payload[ext_hdr.payload().len() + 2..],
+                                    None,
+                                    Some(rpl_hop_by_hop),
+                                );
+                            }
+                            #[cfg(feature = "rpl-mop-2")]
+                            crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
+                                ipv6_repr.next_header = hbh_repr.next_header;
+                                return self.forward(
+                                    ipv6_repr,
+                                    &ip_payload[ext_hdr.payload().len() + 2..],
+                                    None,
+                                    Some(rpl_hop_by_hop),
+                                );
                             }
                         }
                     }
@@ -472,111 +470,109 @@ impl InterfaceInner {
     ) -> Option<IpPacket<'frame>> {
         let mut to = ip_repr.dst_addr;
 
-        if let Some(rpl) = &self.rpl {
-            // Change the sender rank to our own rank.
+        // Change the sender rank to our own rank.
 
-            if let Some(hbh) = &mut hbh {
-                hbh.sender_rank = rpl.rank.raw_value();
+        if let Some(hbh) = &mut hbh {
+            hbh.sender_rank = self.rpl.rank.raw_value();
+        }
+
+        match self.rpl.mode_of_operation {
+            #[cfg(feature = "rpl-mop-0")]
+            crate::iface::RplModeOfOperation::NoDownwardRoutesMaintained => {
+                if let Some(parent) = self.rpl.parent_address {
+                    if let Some(hbh) = &mut hbh {
+                        hbh.down = false;
+                    }
+                    to = parent
+                } else {
+                    net_debug!("Unable to forward, no parent yet.");
+                    return None;
+                }
             }
 
-            match rpl.mode_of_operation {
-                #[cfg(feature = "rpl-mop-0")]
-                crate::iface::RplModeOfOperation::NoDownwardRoutesMaintained => {
-                    if let Some(parent) = rpl.parent_address {
-                        if let Some(hbh) = &mut hbh {
-                            hbh.down = false;
-                        }
-                        to = parent
-                    } else {
-                        net_debug!("Unable to forward, no parent yet.");
-                        return None;
-                    }
-                }
+            #[cfg(feature = "rpl-mop-1")]
+            crate::iface::RplModeOfOperation::NonStoringMode => {
+                if self.rpl.is_root {
+                    // Look the route to be used in the source routing header.
+                    let mut route = heapless::Vec::<Ipv6Address, 32>::new();
 
-                #[cfg(feature = "rpl-mop-1")]
-                crate::iface::RplModeOfOperation::NonStoringMode => {
-                    if rpl.is_root {
-                        // Look the route to be used in the source routing header.
-                        let mut route = heapless::Vec::<Ipv6Address, 32>::new();
+                    // The destination should be reachable in 32 hops, otherwise, we'll have an
+                    // infenite loop here.
+                    let mut next_hop = ip_repr.dst_addr;
+                    route.push(next_hop).unwrap();
 
-                        // The destination should be reachable in 32 hops, otherwise, we'll have an
-                        // infenite loop here.
-                        let mut next_hop = ip_repr.dst_addr;
-                        route.push(next_hop).unwrap();
-
-                        loop {
-                            next_hop = rpl.relations.find_next_hop(&next_hop).unwrap();
-                            if next_hop == self.ipv6_addr().unwrap() {
-                                break;
-                            } else {
-                                route.push(next_hop).unwrap();
-                            }
-                        }
-
-                        net_trace!("Creating the source routes");
-                        dbg!(&route);
-
-                        if route.is_empty() {
-                            // Don't use source routing header, but just transmit to the neighbor.
-                            if let Some(hbh) = &mut hbh {
-                                hbh.down = true;
-                            }
-                            to = ip_repr.dst_addr;
+                    loop {
+                        next_hop = self.relations.find_next_hop(&next_hop).unwrap();
+                        if next_hop == self.ipv6_addr().unwrap() {
+                            break;
                         } else {
-                            let len = route.len();
-                            to = route[len - 1];
-
-                            let mut addresses = heapless::Vec::new();
-                            for addr in route[..len - 1].iter().rev() {
-                                addresses.push(*addr).unwrap();
-                            }
-
-                            net_trace!("Routing header routes:");
-                            dbg!(&addresses);
-
-                            ip_repr.dst_addr = to;
-                            // Add the source routing option to the packet.
-                            routing = Some(Ipv6RoutingRepr::Rpl {
-                                segments_left: route.len() as u8 - 1,
-                                cmpr_i: 0,
-                                cmpr_e: 0,
-                                pad: 0,
-                                addresses,
-                            });
-
-                            net_trace!("Routing header created");
-                            dbg!(&routing);
+                            route.push(next_hop).unwrap();
                         }
-                    } else if routing.is_some() {
-                    } else if let Some(parent) = rpl.parent_address {
-                        if let Some(hbh) = &mut hbh {
-                            hbh.down = false;
-                        }
-                        to = parent
-                    } else {
-                        net_debug!("Unable to forward, no parent yet.");
-                        return None;
                     }
-                }
 
-                #[cfg(feature = "rpl-mop-2")]
-                crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
-                    // First look if we know that the destination is in our sub-tree.
-                    // Otherwise, try to send it up to our parent.
-                    if let Some(nh) = rpl.relations.find_next_hop(&to) {
+                    net_trace!("Creating the source routes");
+                    dbg!(&route);
+
+                    if route.is_empty() {
+                        // Don't use source routing header, but just transmit to the neighbor.
                         if let Some(hbh) = &mut hbh {
                             hbh.down = true;
                         }
-                        to = nh;
-                    } else if let Some(parent) = rpl.parent_address {
-                        if let Some(hbh) = &mut hbh {
-                            hbh.down = false;
-                        }
-                        to = parent;
+                        to = ip_repr.dst_addr;
                     } else {
-                        net_debug!("Destination not in sub-tree, and we don't have a parent yet.");
-                        return None;
+                        let len = route.len();
+                        to = route[len - 1];
+
+                        let mut addresses = heapless::Vec::new();
+                        for addr in route[..len - 1].iter().rev() {
+                            addresses.push(*addr).unwrap();
+                        }
+
+                        net_trace!("Routing header routes:");
+                        dbg!(&addresses);
+
+                        ip_repr.dst_addr = to;
+                        // Add the source routing option to the packet.
+                        routing = Some(Ipv6RoutingRepr::Rpl {
+                            segments_left: route.len() as u8 - 1,
+                            cmpr_i: 0,
+                            cmpr_e: 0,
+                            pad: 0,
+                            addresses,
+                        });
+
+                        net_trace!("Routing header created");
+                        dbg!(&routing);
                     }
+                } else if routing.is_some() {
+                } else if let Some(parent) = self.rpl.parent_address {
+                    if let Some(hbh) = &mut hbh {
+                        hbh.down = false;
+                    }
+                    to = parent
+                } else {
+                    net_debug!("Unable to forward, no parent yet.");
+                    return None;
+                }
+            }
+
+            #[cfg(feature = "rpl-mop-2")]
+            crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
+                // First look if we know that the destination is in our sub-tree.
+                // Otherwise, try to send it up to our parent.
+                if let Some(nh) = self.relations.find_next_hop(&to) {
+                    if let Some(hbh) = &mut hbh {
+                        hbh.down = true;
+                    }
+                    to = nh;
+                } else if let Some(parent) = self.rpl.parent_address {
+                    if let Some(hbh) = &mut hbh {
+                        hbh.down = false;
+                    }
+                    to = parent;
+                } else {
+                    net_debug!("Destination not in sub-tree, and we don't have a parent yet.");
+                    return None;
                 }
             }
         }

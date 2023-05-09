@@ -22,17 +22,17 @@ impl ObjectiveFunction0 {
     }
 
     /// Return the most preferred neighbor from the table.
-    pub(crate) fn preferred_parent(neighbors: &RplNeighborTable) -> Option<&RplNeighbor> {
+    pub(crate) fn preferred_parent(neighbors: &ParentSet) -> Option<Parent> {
         let mut preferred_parent = None;
-        for n in &neighbors.neighbors {
-            if let RplNeighborEntry::Neighbor((n, _)) = n {
+        for n in &neighbors.parents {
+            if let ParentEntry::Parent((n, _)) = n {
                 if preferred_parent.is_none() {
-                    preferred_parent = Some(n);
+                    preferred_parent = Some(*n);
                 } else {
                     let parent1 = preferred_parent.as_ref().unwrap();
 
-                    if parent1.rank().dag_rank() > n.rank().dag_rank() {
-                        preferred_parent = Some(n);
+                    if parent1.rank.dag_rank() > n.rank.dag_rank() {
+                        preferred_parent = Some(*n);
                     }
                 }
             }

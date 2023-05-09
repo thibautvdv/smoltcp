@@ -1,32 +1,22 @@
 use super::rank::Rank;
+use super::SequenceCounter;
 use crate::time::{Duration, Instant};
 use crate::wire::{HardwareAddress, Ipv6Address};
 
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct RplNeighborTable {
-    pub(crate) neighbors: [RplNeighborEntry; super::consts::DEFAULT_RPL_NEIGHBOR_TABLE_SIZE],
+pub struct ParentSet {
+    pub(crate) parents: [ParentEntry; super::consts::DEFAULT_RPL_PARENT_SET_SIZE],
 }
 
 #[cfg(feature = "std")]
-impl ToString for RplNeighborTable {
+impl ToString for ParentSet {
     fn to_string(&self) -> String {
         let mut s = String::new();
 
-        for n in self.neighbors.iter() {
-            if let RplNeighborEntry::Neighbor((
-                RplNeighbor {
-                    ll_addr,
-                    rank,
-                    ip_addr,
-                    ..
-                },
-                last_heard,
-            )) = n
-            {
-                s.push_str(&format!(
-                    "IEEE={ll_addr} IPv6={ip_addr} {rank} LH={last_heard}\n"
-                ));
+        for n in self.parents.iter() {
+            if let ParentEntry::Parent((Parent { rank, ip_addr, .. }, last_heard)) = n {
+                s.push_str(&format!("IPv6={ip_addr} {rank} LH={last_heard}\n"));
             }
         }
 
@@ -34,181 +24,144 @@ impl ToString for RplNeighborTable {
     }
 }
 
-impl RplNeighborTable {
+impl ParentSet {
     /// Get the first free entry in the neighbor table.
-    fn get_first_free_entry(&mut self) -> Option<&mut RplNeighborEntry> {
-        self.neighbors
+    fn get_first_free_entry(&mut self) -> Option<&mut ParentEntry> {
+        self.parents
             .iter_mut()
-            .find(|neighbor| matches!(neighbor, RplNeighborEntry::Empty))
-    }
-
-    /// Return a mutable reference to a neighbor matching the link-layer address.
-    pub(crate) fn get_neighbor_from_ll_addr(
-        &mut self,
-        addr: &HardwareAddress,
-    ) -> Option<&mut (RplNeighbor, Instant)> {
-        self.neighbors
-            .iter_mut()
-            .find(|neighbor| match neighbor {
-                RplNeighborEntry::Neighbor((RplNeighbor { ll_addr, .. }, _)) if ll_addr == addr => {
-                    true
-                }
-                _ => false,
-            })
-            .map(|n| match n {
-                RplNeighborEntry::Neighbor(n) => n,
-                RplNeighborEntry::Empty => unreachable!(),
-            })
+            .find(|parent| matches!(parent, ParentEntry::Empty))
     }
 
     /// Return a mutable reference to a neighbor matching the IPv6 address.
-    pub(crate) fn get_neighbor_from_ip_addr(
-        &mut self,
-        addr: &Ipv6Address,
-    ) -> Option<&mut (RplNeighbor, Instant)> {
-        self.neighbors
+    pub(crate) fn get_parent(&mut self, addr: &Ipv6Address) -> Option<&mut (Parent, Instant)> {
+        self.parents
             .iter_mut()
-            .find(|neighbor| match neighbor {
-                RplNeighborEntry::Neighbor((RplNeighbor { ip_addr, .. }, _)) if ip_addr == addr => {
-                    true
-                }
+            .find(|parent| match parent {
+                ParentEntry::Parent((Parent { ip_addr, .. }, _)) if ip_addr == addr => true,
                 _ => false,
             })
             .map(|n| match n {
-                RplNeighborEntry::Neighbor(n) => n,
-                RplNeighborEntry::Empty => unreachable!(),
+                ParentEntry::Parent(n) => n,
+                ParentEntry::Empty => unreachable!(),
             })
     }
 
-    fn find_worst_neighbor(&mut self) -> Option<&mut RplNeighbor> {
-        let mut worst_neighbor = None;
+    pub(crate) fn remove_parent(&mut self, addr: &Ipv6Address) {
+        if let Some(parent) = self.parents.iter_mut().find(|parent| match parent {
+            ParentEntry::Parent((Parent { ip_addr, .. }, _)) if ip_addr == addr => true,
+            _ => false,
+        }) {
+            *parent = ParentEntry::Empty;
+        }
+    }
 
-        for n in &mut self.neighbors {
-            if let RplNeighborEntry::Neighbor((neighbor, _)) = n {
-                if worst_neighbor.is_none() {
-                    worst_neighbor = Some(neighbor);
-                } else if worst_neighbor.as_ref().unwrap().rank.dag_rank()
-                    < neighbor.rank.dag_rank()
-                {
-                    worst_neighbor = Some(neighbor)
+    fn find_worst_parent(&mut self) -> Option<&mut Parent> {
+        let mut worst_parent = None;
+
+        for n in &mut self.parents {
+            if let ParentEntry::Parent((parent, _)) = n {
+                if worst_parent.is_none() {
+                    worst_parent = Some(parent);
+                } else if worst_parent.as_ref().unwrap().rank.dag_rank() < parent.rank.dag_rank() {
+                    worst_parent = Some(parent)
                 }
             } else {
                 continue;
             }
         }
 
-        worst_neighbor
+        worst_parent
     }
 
     /// Add a neighbor to the neighbor table.
-    pub(crate) fn add_neighbor(&mut self, neighbor: RplNeighbor, instant: Instant) {
-        if let Some((n, last_heard)) = self.get_neighbor_from_ll_addr(&neighbor.ll_addr) {
-            n.update_info(
-                neighbor.ip_addr.into(),
-                neighbor.rank.into(),
-                neighbor.preference.into(),
-            );
-
-            *last_heard = instant;
-
-            return;
-        }
-
-        if let Some(free_entry) = self.get_first_free_entry() {
-            *free_entry = RplNeighborEntry::Neighbor((neighbor, instant));
+    pub(crate) fn add_parent(&mut self, parent: Parent, instant: Instant) {
+        // First look if there is place in the parent set.
+        if let Some(entry) = self.get_first_free_entry() {
+            *entry = ParentEntry::Parent((parent, instant));
             return;
         }
 
         // We didn't find the neighbor and there was no free space in the table.
         // We remove the neighbor with the highest rank.
-        let worst_neighbor = self.find_worst_neighbor().unwrap();
-        if neighbor.rank.dag_rank() < worst_neighbor.rank.dag_rank() {
-            *worst_neighbor = neighbor;
-        }
-    }
-
-    pub(crate) fn purge(&mut self, now: Instant, expiration: Duration) {
-        for n in self.neighbors.iter_mut() {
-            if let RplNeighborEntry::Neighbor((_, last_heard)) = n {
-                if *last_heard < now - expiration {
-                    *n = RplNeighborEntry::Empty;
-                }
-            }
+        let entry = self.find_worst_parent().unwrap();
+        if parent.rank.dag_rank() < entry.rank.dag_rank() {
+            *entry = parent;
         }
     }
 
     pub fn count(&self) -> usize {
-        self.neighbors
+        self.parents
             .iter()
-            .filter(|n| matches!(n, RplNeighborEntry::Neighbor(_)))
+            .filter(|n| matches!(n, ParentEntry::Parent(_)))
             .count()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.parents
+            .iter_mut()
+            .for_each(|p| *p = ParentEntry::Empty);
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.parents
+            .iter()
+            .filter(|p| matches!(p, ParentEntry::Parent(_)))
+            .count()
+            == 0
+    }
+
+    pub(crate) fn purge(&mut self, f: impl Fn(&(Parent, Instant)) -> bool) {
+        self.parents
+            .iter_mut()
+            .filter(|p| match p {
+                ParentEntry::Empty => false,
+                ParentEntry::Parent(inner) => f(inner),
+            })
+            .for_each(|p| *p = ParentEntry::Empty);
     }
 }
 
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) enum RplNeighborEntry {
+pub(crate) enum ParentEntry {
     #[default]
     Empty,
-    Neighbor((RplNeighbor, Instant)),
+    Parent((Parent, Instant)),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) struct RplNeighbor {
-    ll_addr: HardwareAddress,
-    rank: Rank,
-    ip_addr: Ipv6Address,
-    preference: u8,
+pub(crate) struct Parent {
+    pub(crate) rank: Rank,
+    pub(crate) ip_addr: Ipv6Address,
+    pub(crate) preference: u8,
+    pub(crate) version_number: SequenceCounter,
 }
 
-impl RplNeighbor {
+impl Parent {
     pub fn new(
-        addr: HardwareAddress,
         ip_addr: Ipv6Address,
-        rank: Option<Rank>,
+        rank: Rank,
         preference: Option<u8>,
+        version_number: SequenceCounter,
     ) -> Self {
         Self {
-            ll_addr: addr,
             ip_addr,
-            rank: rank.unwrap_or(Rank::INFINITE),
+            rank,
             preference: preference.unwrap_or(0),
+            version_number,
         }
     }
 
-    pub fn update_info(
-        &mut self,
-        ip_addr: Option<Ipv6Address>,
-        rank: Option<Rank>,
-        preference: Option<u8>,
-    ) {
-        if let Some(ip_addr) = ip_addr {
-            self.ip_addr = ip_addr;
-        }
-
-        if let Some(rank) = rank {
-            self.rank = rank;
-        }
-
-        if let Some(preference) = preference {
-            self.preference = preference;
-        }
+    pub fn update_rank(&mut self, rank: Rank) {
+        self.rank = rank;
     }
 
-    pub fn link_layer_addr(&self) -> HardwareAddress {
-        self.ll_addr
+    pub fn update_preference(&mut self, preference: u8) {
+        self.preference = preference;
     }
 
-    pub fn ip_addr(&self) -> Ipv6Address {
-        self.ip_addr
-    }
-
-    pub fn rank(&self) -> Rank {
-        self.rank
-    }
-
-    pub fn preference(&self) -> u8 {
-        self.preference
+    pub fn update_version_number(&mut self, version_number: SequenceCounter) {
+        self.version_number = version_number;
     }
 }
