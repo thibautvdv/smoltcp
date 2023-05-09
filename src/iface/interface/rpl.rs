@@ -561,6 +561,58 @@ impl InterfaceInner {
         }
     }
 
+    pub(super) fn process_rpl_hopbyhop<'frame>(
+        &mut self,
+        sockets: &mut SocketSet,
+        ll_src_addr: Option<HardwareAddress>,
+        mut ipv6_repr: Ipv6Repr,
+        ext_hdr: Ipv6ExtHeaderRepr,
+        mut hbh: RplHopByHopRepr,
+        ip_payload: &'frame [u8],
+    ) -> Option<IpPacket<'frame>> {
+        let sender_rank = Rank::new(hbh.sender_rank, self.rpl.minimum_hop_rank_increase);
+
+        if hbh.rank_error {
+            net_trace!("[RPL HBH] contains rank error, resetting trickle timer, dropping packet");
+
+            let InterfaceInner { rpl, now, rand, .. } = self;
+            rpl.dio_timer.hear_inconsistency(*now, rand);
+            return None;
+        }
+
+        // Check for inconsistencies (see 11.2.2.2), which are:
+        //  - If the packet is going down, and the sender rank is higher or equal as ours.
+        //  - If the packet is going up, and the sender rank is lower or equal as ours.
+        if (hbh.down && self.rpl.rank <= sender_rank) || (!hbh.down && self.rpl.rank >= sender_rank)
+        {
+            net_trace!("[RPL HBH] inconsistency detected, setting Rank-Error");
+            hbh.rank_error = true;
+        }
+
+        // If the packet is not for us, we forward the packet.
+        if ipv6_repr.dst_addr.is_unicast() && !self.has_ip_addr(ipv6_repr.dst_addr) {
+            // Replace the next header field in the IPv6 header by the next header of the
+            // hop-by-hop header.
+            ipv6_repr.next_header = ext_hdr.next_header;
+
+            return self.forward(
+                ipv6_repr,
+                &ip_payload[ext_hdr.data.len() + 2..],
+                None,
+                Some(hbh),
+            );
+        }
+
+        self.process_nxt_hdr(
+            sockets,
+            ll_src_addr,
+            ipv6_repr,
+            ext_hdr.next_header,
+            false,
+            &ip_payload[ext_hdr.data.len() + 2..],
+        )
+    }
+
     fn remove_parent<'options>(&mut self) -> RplRepr<'options> {
         let InterfaceInner { rpl, .. } = self;
 

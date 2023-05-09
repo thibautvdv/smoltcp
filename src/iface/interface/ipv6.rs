@@ -83,21 +83,13 @@ impl InterfaceInner {
             #[cfg(feature = "socket-tcp")]
             IpProtocol::Tcp => self.process_tcp(sockets, ipv6_repr.into(), ip_payload),
 
-            IpProtocol::HopByHop => self.process_hopbyhop(
-                sockets,
-                src_ll_addr,
-                ipv6_repr,
-                handled_by_raw_socket,
-                ip_payload,
-            ),
+            IpProtocol::HopByHop => {
+                self.process_hopbyhop(sockets, src_ll_addr, ipv6_repr, ip_payload)
+            }
 
-            IpProtocol::Ipv6Route => self.process_routing(
-                sockets,
-                src_ll_addr,
-                ipv6_repr,
-                handled_by_raw_socket,
-                ip_payload,
-            ),
+            IpProtocol::Ipv6Route => {
+                self.process_routing(sockets, src_ll_addr, ipv6_repr, ip_payload)
+            }
 
             #[cfg(feature = "socket-raw")]
             _ if handled_by_raw_socket => None,
@@ -265,55 +257,32 @@ impl InterfaceInner {
         }
     }
 
-    #[cfg(feature = "proto-ipv6")]
     pub(super) fn process_hopbyhop<'frame>(
         &mut self,
         sockets: &mut SocketSet,
         ll_src_addr: Option<HardwareAddress>,
-        mut ipv6_repr: Ipv6Repr,
-        handled_by_raw_socket: bool,
+        ipv6_repr: Ipv6Repr,
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
         let ext_hdr = check!(Ipv6ExtHeader::new_checked(ip_payload));
+
         let hbh_repr = check!(Ipv6ExtHeaderRepr::parse(&ext_hdr));
         let hbh_options = Ipv6OptionsIterator::new(hbh_repr.data);
+
         for opt_repr in hbh_options {
             let opt_repr = check!(opt_repr);
             match opt_repr {
                 Ipv6OptionRepr::Pad1 | Ipv6OptionRepr::PadN(_) => (),
                 #[cfg(feature = "proto-rpl")]
                 Ipv6OptionRepr::Rpl(rpl_hop_by_hop) => {
-                    let dst = ipv6_repr.dst_addr;
-
-                    if dst.is_unicast() && !self.has_ip_addr(dst) {
-                        match self.rpl.mode_of_operation {
-                            crate::iface::RplModeOfOperation::NoDownwardRoutesMaintained => {
-                                if let Some(default_route) = self.rpl.parent_address {
-                                    todo!();
-                                }
-                            }
-                            #[cfg(feature = "rpl-mop-1")]
-                            crate::iface::RplModeOfOperation::NonStoringMode => {
-                                ipv6_repr.next_header = hbh_repr.next_header;
-                                return self.forward(
-                                    ipv6_repr,
-                                    &ip_payload[ext_hdr.payload().len() + 2..],
-                                    None,
-                                    Some(rpl_hop_by_hop),
-                                );
-                            }
-                            #[cfg(feature = "rpl-mop-2")]
-                            crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
-                                ipv6_repr.next_header = hbh_repr.next_header;
-                                return self.forward(
-                                    ipv6_repr,
-                                    &ip_payload[ext_hdr.payload().len() + 2..],
-                                    None,
-                                    Some(rpl_hop_by_hop),
-                                );
-                            }
-                        }
-                    }
+                    return self.process_rpl_hopbyhop(
+                        sockets,
+                        ll_src_addr,
+                        ipv6_repr,
+                        hbh_repr,
+                        rpl_hop_by_hop,
+                        ip_payload,
+                    );
                 }
 
                 Ipv6OptionRepr::Unknown { type_, .. } => {
@@ -336,7 +305,7 @@ impl InterfaceInner {
             ll_src_addr,
             ipv6_repr,
             ext_hdr.next_header(),
-            handled_by_raw_socket,
+            false,
             &ip_payload[ext_hdr.payload().len() + 2..],
         )
     }
@@ -346,17 +315,12 @@ impl InterfaceInner {
         sockets: &mut SocketSet,
         ll_src_addr: Option<HardwareAddress>,
         mut ipv6_repr: Ipv6Repr,
-        handled_by_raw_socket: bool,
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
         let ext_hdr = check!(Ipv6ExtHeader::new_checked(ip_payload));
 
         let routing_header = check!(Ipv6RoutingHeader::new_checked(ext_hdr.payload()));
-
         let mut routing_repr = check!(Ipv6RoutingRepr::parse(&routing_header));
-
-        net_trace!("Processing");
-        dbg!(&routing_repr);
 
         match &mut routing_repr {
             Ipv6RoutingRepr::Type2 { .. } => {
@@ -434,12 +398,11 @@ impl InterfaceInner {
             ll_src_addr,
             ipv6_repr,
             ext_hdr.next_header(),
-            handled_by_raw_socket,
+            false,
             &ip_payload[ext_hdr.payload().len() + 2..],
         )
     }
 
-    #[cfg(feature = "proto-ipv6")]
     pub(super) fn icmpv6_reply<'frame, 'icmp: 'frame>(
         &self,
         ipv6_repr: Ipv6Repr,
@@ -461,121 +424,124 @@ impl InterfaceInner {
     }
 
     // NOTE: This function is currently only used for RPL.
-    fn forward<'frame>(
+    pub(super) fn forward<'frame>(
         &self,
         mut ip_repr: Ipv6Repr,
         payload: &'frame [u8],
         mut routing: Option<Ipv6RoutingRepr>,
         mut hbh: Option<RplHopByHopRepr>,
     ) -> Option<IpPacket<'frame>> {
-        let mut to = ip_repr.dst_addr;
+        use crate::iface::RplModeOfOperation;
+
+        let InterfaceInner { rpl, .. } = self;
 
         // Change the sender rank to our own rank.
-
         if let Some(hbh) = &mut hbh {
             hbh.sender_rank = self.rpl.rank.raw_value();
         }
 
-        match self.rpl.mode_of_operation {
-            #[cfg(feature = "rpl-mop-0")]
-            crate::iface::RplModeOfOperation::NoDownwardRoutesMaintained => {
-                if let Some(parent) = self.rpl.parent_address {
-                    if let Some(hbh) = &mut hbh {
-                        hbh.down = false;
-                    }
-                    to = parent
-                } else {
-                    net_debug!("Unable to forward, no parent yet.");
-                    return None;
-                }
+        let forward_to = match self.rpl.mode_of_operation {
+            RplModeOfOperation::NoDownwardRoutesMaintained if rpl.has_parent() => {
+                net_trace!("[FORWARDING] forwarding to parent");
+                rpl.parent_address.unwrap()
+            }
+
+            RplModeOfOperation::NoDownwardRoutesMaintained => {
+                net_trace!("[FORWARDING] cannot forward, no parent");
+                return None;
             }
 
             #[cfg(feature = "rpl-mop-1")]
-            crate::iface::RplModeOfOperation::NonStoringMode => {
-                if self.rpl.is_root {
-                    // Look the route to be used in the source routing header.
-                    let mut route = heapless::Vec::<Ipv6Address, 32>::new();
+            RplModeOfOperation::NonStoringMode if self.rpl.is_root => {
+                if self.has_neighbor(&ip_repr.dst_addr.into()) {
+                    net_trace!("[FORWARDING] forwarding to neighbor");
+                    ip_repr.dst_addr
+                } else {
+                    net_trace!("[FORWARDING] forwarding, creating source routing header");
 
-                    // The destination should be reachable in 32 hops, otherwise, we'll have an
-                    // infenite loop here.
-                    let mut next_hop = ip_repr.dst_addr;
-                    route.push(next_hop).unwrap();
+                    let our_ip = self.ipv6_addr().unwrap();
+
+                    let mut nh = ip_repr.dst_addr;
+
+                    // Create the source routing header
+                    let mut route = heapless::Vec::<Ipv6Address, 32>::new();
+                    route.push(nh).unwrap();
 
                     loop {
-                        next_hop = self.relations.find_next_hop(&next_hop).unwrap();
-                        if next_hop == self.ipv6_addr().unwrap() {
-                            break;
-                        } else {
+                        let next_hop = self.relations.find_next_hop(&nh);
+                        if let Some(next_hop) = next_hop {
+                            if next_hop == our_ip {
+                                break;
+                            }
+
                             route.push(next_hop).unwrap();
+                            nh = next_hop;
+                        } else {
+                            todo!("unreachable");
                         }
                     }
 
-                    net_trace!("Creating the source routes");
-                    dbg!(&route);
+                    let segments_left = route.len() - 1;
+                    ip_repr.dst_addr = route[segments_left];
 
-                    if route.is_empty() {
-                        // Don't use source routing header, but just transmit to the neighbor.
-                        if let Some(hbh) = &mut hbh {
-                            hbh.down = true;
-                        }
-                        to = ip_repr.dst_addr;
-                    } else {
-                        let len = route.len();
-                        to = route[len - 1];
-
-                        let mut addresses = heapless::Vec::new();
-                        for addr in route[..len - 1].iter().rev() {
-                            addresses.push(*addr).unwrap();
-                        }
-
-                        net_trace!("Routing header routes:");
-                        dbg!(&addresses);
-
-                        ip_repr.dst_addr = to;
-                        // Add the source routing option to the packet.
-                        routing = Some(Ipv6RoutingRepr::Rpl {
-                            segments_left: route.len() as u8 - 1,
-                            cmpr_i: 0,
-                            cmpr_e: 0,
-                            pad: 0,
-                            addresses,
-                        });
-
-                        net_trace!("Routing header created");
-                        dbg!(&routing);
+                    // Create the route list for the source routing header
+                    let mut addresses = heapless::Vec::new();
+                    for addr in route[..segments_left].iter().rev() {
+                        addresses.push(*addr).unwrap();
                     }
-                } else if routing.is_some() {
-                } else if let Some(parent) = self.rpl.parent_address {
-                    if let Some(hbh) = &mut hbh {
-                        hbh.down = false;
-                    }
-                    to = parent
-                } else {
-                    net_debug!("Unable to forward, no parent yet.");
-                    return None;
+
+                    // Add the source routing option to the packet.
+                    routing = Some(Ipv6RoutingRepr::Rpl {
+                        segments_left: segments_left as u8,
+                        cmpr_i: 0,
+                        cmpr_e: 0,
+                        pad: 0,
+                        addresses,
+                    });
+
+                    ip_repr.dst_addr
                 }
+            }
+
+            RplModeOfOperation::NonStoringMode if routing.is_some() => {
+                net_trace!("[FORWARDING] forwarding using source routing header");
+                ip_repr.dst_addr
+            }
+            RplModeOfOperation::NonStoringMode if rpl.parent_address.is_some() => {
+                rpl.parent_address.unwrap()
+            }
+            RplModeOfOperation::NonStoringMode => {
+                net_trace!("[FORWARDING] cannot forward, no parent");
+                return None;
             }
 
             #[cfg(feature = "rpl-mop-2")]
-            crate::iface::RplModeOfOperation::StoringModeWithoutMulticast => {
+            RplModeOfOperation::StoringModeWithoutMulticast
+                if self.relations.find_next_hop(&ip_repr.dst_addr).is_some() =>
+            {
+                net_trace!("[FORWARDING] destination in sub-tree");
+
                 // First look if we know that the destination is in our sub-tree.
                 // Otherwise, try to send it up to our parent.
-                if let Some(nh) = self.relations.find_next_hop(&to) {
-                    if let Some(hbh) = &mut hbh {
-                        hbh.down = true;
-                    }
-                    to = nh;
-                } else if let Some(parent) = self.rpl.parent_address {
-                    if let Some(hbh) = &mut hbh {
-                        hbh.down = false;
-                    }
-                    to = parent;
-                } else {
-                    net_debug!("Destination not in sub-tree, and we don't have a parent yet.");
-                    return None;
+                if let Some(hbh) = &mut hbh {
+                    hbh.down = true;
                 }
+                self.relations.find_next_hop(&ip_repr.dst_addr).unwrap()
             }
-        }
+            #[cfg(feature = "rpl-mop-2")]
+            RplModeOfOperation::StoringModeWithoutMulticast if rpl.has_parent() => {
+                net_trace!("[FORWARDING] forwarding to parent");
+                if let Some(hbh) = &mut hbh {
+                    hbh.down = false;
+                }
+                rpl.parent_address.unwrap()
+            }
+            #[cfg(feature = "rpl-mop-2")]
+            RplModeOfOperation::StoringModeWithoutMulticast => {
+                net_trace!("[FORWARDING] cannot forward, no parent");
+                return None;
+            }
+        };
 
         match ip_repr.next_header {
             IpProtocol::Tcp => todo!(),
@@ -591,7 +557,7 @@ impl InterfaceInner {
 
                 ip_repr.payload_len = udp_repr.header_len() + udp.payload().len();
                 let mut packet =
-                    IpPacket::forward(ip_repr, (udp_repr, udp.payload()), Some(to), hbh);
+                    IpPacket::forward(ip_repr, (udp_repr, udp.payload()), Some(forward_to), hbh);
                 packet.routing = routing;
                 Some(packet)
             }
@@ -606,7 +572,7 @@ impl InterfaceInner {
                 .unwrap();
                 ip_repr.payload_len = icmp_repr.buffer_len();
 
-                let mut packet = IpPacket::forward(ip_repr, icmp_repr, Some(to), hbh);
+                let mut packet = IpPacket::forward(ip_repr, icmp_repr, Some(forward_to), hbh);
                 packet.routing = routing;
 
                 Some(packet)
