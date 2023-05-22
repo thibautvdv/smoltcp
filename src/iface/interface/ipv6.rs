@@ -519,14 +519,25 @@ impl InterfaceInner {
             RplModeOfOperation::StoringModeWithoutMulticast
                 if self.relations.find_next_hop(&ip_repr.dst_addr).is_some() =>
             {
-                net_trace!("[FORWARDING] destination in sub-tree");
-
                 // First look if we know that the destination is in our sub-tree.
                 // Otherwise, try to send it up to our parent.
                 if let Some(hbh) = &mut hbh {
                     hbh.down = true;
                 }
-                self.relations.find_next_hop(&ip_repr.dst_addr).unwrap()
+
+                let nh = self.relations.find_next_hop(&ip_repr.dst_addr).unwrap();
+                let nh = if nh == self.ipv6_addr().unwrap() {
+                    ip_repr.dst_addr
+                } else {
+                    nh
+                };
+
+                net_trace!(
+                    "[FORWARDING] destination in sub-tree, forwarding to: {}",
+                    nh
+                );
+
+                nh
             }
             #[cfg(feature = "rpl-mop-2")]
             RplModeOfOperation::StoringModeWithoutMulticast if rpl.has_parent() => {

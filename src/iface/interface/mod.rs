@@ -1827,82 +1827,84 @@ impl InterfaceInner {
 
         match self.neighbor_cache.lookup(&dst_addr, self.now) {
             NeighborAnswer::Found(hardware_addr) => return Ok((hardware_addr, tx_token)),
-            NeighborAnswer::RateLimited => return Err(DispatchError::NeighborPending),
-            _ => (), // XXX
-        }
-
-        match (src_addr, dst_addr) {
-            #[cfg(feature = "proto-ipv4")]
-            (&IpAddress::Ipv4(src_addr), IpAddress::Ipv4(dst_addr)) => {
-                net_debug!(
-                    "address {} not in neighbor cache, sending ARP request",
-                    dst_addr
-                );
-                let src_hardware_addr = self.hardware_addr.ethernet_or_panic();
-
-                let arp_repr = ArpRepr::EthernetIpv4 {
-                    operation: ArpOperation::Request,
-                    source_hardware_addr: src_hardware_addr,
-                    source_protocol_addr: src_addr,
-                    target_hardware_addr: EthernetAddress::BROADCAST,
-                    target_protocol_addr: dst_addr,
-                };
-
-                if let Err(e) =
-                    self.dispatch_ethernet(tx_token, arp_repr.buffer_len(), |mut frame| {
-                        frame.set_dst_addr(EthernetAddress::BROADCAST);
-                        frame.set_ethertype(EthernetProtocol::Arp);
-
-                        arp_repr.emit(&mut ArpPacket::new_unchecked(frame.payload_mut()))
-                    })
-                {
-                    net_debug!("Failed to dispatch ARP request: {:?}", e);
-                    return Err(DispatchError::NeighborPending);
-                }
-            }
-
-            #[cfg(all(feature = "proto-ipv6", feature = "proto-rpl"))]
-            (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) => {
-                net_debug!("address {} not in neighbor cache", dst_addr);
-                net_debug!("Current neighbor cache is:");
-                net_debug!("{:?}", self.neighbor_cache);
+            NeighborAnswer::RateLimited => {
+                net_debug!("neighbor {} pending", dst_addr);
                 return Err(DispatchError::NeighborPending);
             }
+            NeighborAnswer::NotFound => match (src_addr, dst_addr) {
+                #[cfg(feature = "proto-ipv4")]
+                (&IpAddress::Ipv4(src_addr), IpAddress::Ipv4(dst_addr)) => {
+                    net_debug!(
+                        "address {} not in neighbor cache, sending ARP request",
+                        dst_addr
+                    );
+                    let src_hardware_addr = self.hardware_addr.ethernet_or_panic();
 
-            #[cfg(all(feature = "proto-ipv6", not(feature = "proto-rpl")))]
-            (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) => {
-                net_debug!(
-                    "address {} not in neighbor cache, sending Neighbor Solicitation",
-                    dst_addr
-                );
+                    let arp_repr = ArpRepr::EthernetIpv4 {
+                        operation: ArpOperation::Request,
+                        source_hardware_addr: src_hardware_addr,
+                        source_protocol_addr: src_addr,
+                        target_hardware_addr: EthernetAddress::BROADCAST,
+                        target_protocol_addr: dst_addr,
+                    };
 
-                let solicit = Icmpv6Repr::Ndisc(NdiscRepr::NeighborSolicit {
-                    target_addr: dst_addr,
-                    lladdr: Some(self.hardware_addr.into()),
-                });
+                    if let Err(e) =
+                        self.dispatch_ethernet(tx_token, arp_repr.buffer_len(), |mut frame| {
+                            frame.set_dst_addr(EthernetAddress::BROADCAST);
+                            frame.set_ethertype(EthernetProtocol::Arp);
 
-                let packet = IpPacket::new(
-                    Ipv6Repr {
-                        src_addr,
-                        dst_addr: dst_addr.solicited_node(),
-                        next_header: IpProtocol::Icmpv6,
-                        payload_len: solicit.buffer_len(),
-                        hop_limit: 0xff,
-                    },
-                    solicit,
-                );
+                            arp_repr.emit(&mut ArpPacket::new_unchecked(frame.payload_mut()))
+                        })
+                    {
+                        net_debug!("Failed to dispatch ARP request: {:?}", e);
+                        return Err(DispatchError::NeighborPending);
+                    }
+                }
 
-                if let Err(e) = self.dispatch_ip(tx_token, packet, fragmenter) {
-                    net_debug!("Failed to dispatch NDISC solicit: {:?}", e);
+                #[cfg(all(feature = "proto-ipv6", feature = "proto-rpl"))]
+                (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) => {
+                    net_debug!("address {} not in neighbor cache", dst_addr);
+                    net_debug!("Current neighbor cache is:");
+                    net_debug!("{:?}", self.neighbor_cache);
                     return Err(DispatchError::NeighborPending);
                 }
-            }
 
-            #[allow(unreachable_patterns)]
-            _ => (),
+                #[cfg(all(feature = "proto-ipv6", not(feature = "proto-rpl")))]
+                (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) => {
+                    net_debug!(
+                        "address {} not in neighbor cache, sending Neighbor Solicitation",
+                        dst_addr
+                    );
+
+                    let solicit = Icmpv6Repr::Ndisc(NdiscRepr::NeighborSolicit {
+                        target_addr: dst_addr,
+                        lladdr: Some(self.hardware_addr.into()),
+                    });
+
+                    let packet = IpPacket::new(
+                        Ipv6Repr {
+                            src_addr,
+                            dst_addr: dst_addr.solicited_node(),
+                            next_header: IpProtocol::Icmpv6,
+                            payload_len: solicit.buffer_len(),
+                            hop_limit: 0xff,
+                        },
+                        solicit,
+                    );
+
+                    if let Err(e) = self.dispatch_ip(tx_token, packet, fragmenter) {
+                        net_debug!("Failed to dispatch NDISC solicit: {:?}", e);
+                        return Err(DispatchError::NeighborPending);
+                    }
+                }
+
+                #[allow(unreachable_patterns)]
+                _ => (),
+            },
         }
 
         // The request got dispatched, limit the rate on the cache.
+        net_debug!("request dispatched, limiting rate on cache");
         self.neighbor_cache.limit_rate(self.now);
         Err(DispatchError::NeighborPending)
     }

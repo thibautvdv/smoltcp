@@ -404,10 +404,9 @@ impl InterfaceInner {
         match repr {
             RplRepr::DestinationAdvertisementObject {
                 rpl_instance_id,
-                expect_ack,
-                sequence,
                 dodag_id,
                 ref options,
+                ..
             } => {
                 let InterfaceInner { rpl, .. } = self;
 
@@ -471,10 +470,20 @@ impl InterfaceInner {
                             parent = if let Some(parent) = *parent_address {
                                 Some(parent)
                             } else {
-                                net_trace!(
-                                    "[RPL DAO] Parent Address required for MOP1, dropping packet"
-                                );
-                                return None;
+                                match rpl.mode_of_operation {
+                                    ModeOfOperation::NoDownwardRoutesMaintained => todo!(),
+                                    #[cfg(feature = "rpl-mop-1")]
+                                    ModeOfOperation::NonStoringMode => {
+                                        net_debug!(
+                                            "[RPL DAO] Parent Address required for MOP1, dropping packet"
+                                        );
+                                        return None;
+                                    }
+                                    #[cfg(feature = "rpl-mop-2")]
+                                    ModeOfOperation::StoringModeWithoutMulticast => {
+                                        Some(ip_repr.src_addr)
+                                    }
+                                }
                             };
                         }
                         RplOptionRepr::RplTargetDescriptor { .. } => {
@@ -646,12 +655,14 @@ impl InterfaceInner {
 
         // We select a new parent, so we transmit a DAO (for MOP1, MOP2 and
         // MOP3). For MOP2, the Transit Information does not need the parent address.
-        if let Some(parent_address) = match rpl.mode_of_operation {
+        if let Some((parent_address, dst_addr)) = match rpl.mode_of_operation {
             ModeOfOperation::NoDownwardRoutesMaintained => None,
             #[cfg(feature = "rpl-mop-1")]
-            ModeOfOperation::NonStoringMode => Some(Some(parent.ip_addr)),
+            ModeOfOperation::NonStoringMode => Some((Some(parent.ip_addr), rpl.dodag_id.unwrap())),
             #[cfg(feature = "rpl-mop-2")]
-            ModeOfOperation::StoringModeWithoutMulticast => Some(None),
+            ModeOfOperation::StoringModeWithoutMulticast => {
+                Some((None, rpl.parent_address.unwrap()))
+            }
             #[cfg(feature = "rpl-mop-3")]
             ModeOfOperation::StoringModeWithMulticast => todo!(),
         } {
@@ -681,7 +692,7 @@ impl InterfaceInner {
             Some(IpPacket::new(
                 Ipv6Repr {
                     src_addr,
-                    dst_addr: rpl.dodag_id.unwrap(),
+                    dst_addr,
                     next_header: IpProtocol::Icmpv6,
                     payload_len: icmp.buffer_len(),
                     hop_limit: 64,
