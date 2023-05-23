@@ -13,7 +13,9 @@ impl InterfaceInner {
         let ieee802154_frame = check!(Ieee802154Frame::new_checked(sixlowpan_payload));
         let ieee802154_repr = check!(Ieee802154Repr::parse(&ieee802154_frame));
 
-        if ieee802154_repr.frame_type != Ieee802154FrameType::Data {
+        if ieee802154_repr.frame_type != Ieee802154FrameType::Data
+            && ieee802154_repr.dst_addr.unwrap().as_bytes() != self.hardware_addr.as_bytes()
+        {
             return None;
         }
 
