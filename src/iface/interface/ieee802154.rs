@@ -17,7 +17,9 @@ impl InterfaceInner {
             return None;
         }
 
-        if ieee802154_repr.dst_addr.unwrap().as_bytes() != self.hardware_addr.as_bytes() {
+        if ieee802154_repr.dst_addr.unwrap().is_unicast()
+            && ieee802154_repr.dst_addr.unwrap().as_bytes() != self.hardware_addr.as_bytes()
+        {
             net_debug!(
                 "IEEE802.15.4: dropping {:?} because not our ADDRESS",
                 ieee802154_repr.dst_addr.unwrap()
