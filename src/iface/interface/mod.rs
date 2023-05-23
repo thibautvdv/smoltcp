@@ -908,7 +908,11 @@ impl Interface {
             })
             .min();
 
-        min.min(sockets_min)
+        match (min, sockets_min) => {
+            (Some(x), Some(y)) => x.min(y),
+            (None, Some(y)) => Some(y),
+            (Some(x), None) => Some(x),
+        }
     }
 
     /// Return an _advisory wait time_ for calling [poll] the next time.
