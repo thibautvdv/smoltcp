@@ -908,10 +908,11 @@ impl Interface {
             })
             .min();
 
-        match (min, sockets_min) => {
-            (Some(x), Some(y)) => x.min(y),
+        match (min, sockets_min) {
+            (Some(x), Some(y)) => Some(x.min(y)),
             (None, Some(y)) => Some(y),
             (Some(x), None) => Some(x),
+            (None, None) => None,
         }
     }
 
