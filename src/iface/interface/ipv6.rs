@@ -345,7 +345,6 @@ impl InterfaceInner {
                 if *segments_left == 0 {
                     // We can process the next header.
                 } else if *segments_left as usize > n {
-                    dbg!(&routing_repr);
                     todo!(
                         "We should send an ICMP Parameter Problem, Code 0, \
                             to the source address, pointing to the segments left \
@@ -360,13 +359,12 @@ impl InterfaceInner {
                     let i = addresses.len() - *segments_left as usize;
 
                     let address = addresses[i - 1];
-                    net_debug!("The next address: {address}");
+                    net_debug!("The next address: {}", address);
 
                     // If Addresses[i] or the Destination address is mutlicast, we discard the
                     // packet.
 
                     if address.is_multicast() || ipv6_repr.dst_addr.is_multicast() {
-                        dbg!(&routing_repr);
                         net_trace!("Dropping packet, destination address is multicast");
                         return None;
                     }
@@ -376,7 +374,6 @@ impl InterfaceInner {
                     addresses[i - 1] = tmp_addr;
 
                     if ipv6_repr.hop_limit <= 1 {
-                        dbg!(&routing_repr);
                         todo!(
                             "Send an ICMP Time Exceeded -- Hop Limit Exceeded in \
                             Transit message to the Source Address and discard the packet."
@@ -503,13 +500,16 @@ impl InterfaceInner {
                 }
             }
 
+            #[cfg(feature = "rpl-mop-1")]
             RplModeOfOperation::NonStoringMode if routing.is_some() => {
                 net_trace!("[FORWARDING] forwarding using source routing header");
                 ip_repr.dst_addr
             }
+            #[cfg(feature = "rpl-mop-1")]
             RplModeOfOperation::NonStoringMode if rpl.parent_address.is_some() => {
                 rpl.parent_address.unwrap()
             }
+            #[cfg(feature = "rpl-mop-1")]
             RplModeOfOperation::NonStoringMode => {
                 net_trace!("[FORWARDING] cannot forward, no parent");
                 return None;

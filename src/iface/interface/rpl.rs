@@ -209,11 +209,11 @@ impl InterfaceInner {
                     && sender_rank != Rank::INFINITE
                 {
                     net_trace!("[RPL DIO] accepting new RPL network settings");
-                    net_trace!("  - Grounded: {grounded}");
-                    net_trace!("  - Preference: {dodag_preference}");
-                    net_trace!("  - Version: {version_number}");
-                    net_trace!("  - Instance ID: {rpl_instance_id:?}");
-                    net_trace!("  - DODAG ID: {dodag_id}");
+                    net_trace!("  - Grounded: {}", grounded);
+                    net_trace!("  - Preference: {}", dodag_preference);
+                    net_trace!("  - Version: {}", version_number);
+                    net_trace!("  - Instance ID: {:?}", rpl_instance_id);
+                    net_trace!("  - DODAG ID: {}", dodag_id);
 
                     rpl.grounded = grounded;
                     rpl.mode_of_operation = mode_of_operation.into();

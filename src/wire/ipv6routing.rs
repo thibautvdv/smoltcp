@@ -454,7 +454,6 @@ impl Repr {
                     buffer[len..][..16].copy_from_slice(addr.as_bytes());
                     len += 16;
                 }
-                dbg!(&buffer[..len]);
 
                 header.set_addresses(&buffer[..len]);
             }

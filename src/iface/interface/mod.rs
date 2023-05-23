@@ -1863,9 +1863,9 @@ impl InterfaceInner {
 
                 #[cfg(all(feature = "proto-ipv6", feature = "proto-rpl"))]
                 (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) => {
-                    net_debug!("address {} not in neighbor cache", dst_addr);
-                    net_debug!("Current neighbor cache is:");
-                    net_debug!("{:?}", self.neighbor_cache);
+                    // net_debug!("address {} not in neighbor cache", dst_addr);
+                    // net_debug!("Current neighbor cache is:");
+                    // net_debug!("{:?}", self.neighbor_cache);
                     return Err(DispatchError::NeighborPending);
                 }
 

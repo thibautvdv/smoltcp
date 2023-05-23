@@ -65,6 +65,7 @@ impl Route {
 
 /// A routing table.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Routes {
     storage: Vec<Route, IFACE_MAX_ROUTE_COUNT>,
 }
