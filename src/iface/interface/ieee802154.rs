@@ -13,9 +13,15 @@ impl InterfaceInner {
         let ieee802154_frame = check!(Ieee802154Frame::new_checked(sixlowpan_payload));
         let ieee802154_repr = check!(Ieee802154Repr::parse(&ieee802154_frame));
 
-        if ieee802154_repr.frame_type != Ieee802154FrameType::Data
-            && ieee802154_repr.dst_addr.unwrap().as_bytes() != self.hardware_addr.as_bytes()
-        {
+        if ieee802154_repr.frame_type != Ieee802154FrameType::Data {
+            return None;
+        }
+
+        if ieee802154_repr.dst_addr.unwrap().as_bytes() != self.hardware_addr.as_bytes() {
+            net_debug!(
+                "IEEE802.15.4: dropping {:?} because not our ADDRESS",
+                ieee802154_repr.dst_addr.unwrap()
+            );
             return None;
         }
 
