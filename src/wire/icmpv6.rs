@@ -579,6 +579,7 @@ impl core::fmt::Display for Repr<'_> {
             Repr::EchoReply { .. } => todo!(),
             Repr::Ndisc(_) => todo!(),
             Repr::Mld(_) => todo!(),
+            #[cfg(feature = "proto-rpl")]
             Repr::Rpl(rpl) => write!(f, "{rpl}"),
         }
     }

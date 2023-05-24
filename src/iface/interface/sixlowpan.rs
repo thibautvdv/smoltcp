@@ -1,6 +1,8 @@
 use super::*;
 
+#[cfg(feature = "proto-rpl")]
 use crate::iface::rpl::lollipop;
+
 use crate::phy::ChecksumCapabilities;
 use crate::wire::*;
 

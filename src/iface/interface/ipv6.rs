@@ -328,6 +328,9 @@ impl InterfaceInner {
                 todo!("We should respond with a ICMPv6 unkown protocol.");
                 return None;
             }
+            #[cfg(not(feature = "proto-rpl"))]
+            Ipv6RoutingRepr::Rpl { .. } => (),
+            #[cfg(feature = "proto-rpl")]
             Ipv6RoutingRepr::Rpl {
                 segments_left,
                 cmpr_i,
@@ -421,6 +424,7 @@ impl InterfaceInner {
     }
 
     // NOTE: This function is currently only used for RPL.
+    #[cfg(feature = "proto-rpl")]
     pub(super) fn forward<'frame>(
         &self,
         mut ip_repr: Ipv6Repr,

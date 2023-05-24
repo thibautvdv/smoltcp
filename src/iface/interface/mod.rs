@@ -269,7 +269,9 @@ pub struct InterfaceInner {
     #[cfg(feature = "proto-rpl")]
     rpl: super::RplInstance,
 
+    #[cfg(feature = "proto-rpl")]
     rpl_parent_set: super::rpl::neighbor_table::ParentSet,
+    #[cfg(feature = "proto-rpl")]
     relations: super::rpl::relations::Relations,
 }
 
@@ -328,6 +330,7 @@ enum EthernetPacket<'a> {
 pub struct IpPacket<'a> {
     forwarding: Option<Ipv6Address>,
     routing: Option<Ipv6RoutingRepr>,
+    #[cfg(feature = "proto-rpl")]
     hbh: Option<RplHopByHopRepr>,
     repr: IpRepr,
     payload: IpPayload<'a>,
@@ -406,12 +409,14 @@ impl<'a> IpPacket<'a> {
         Self {
             forwarding: None,
             routing: None,
+            #[cfg(feature = "proto-rpl")]
             hbh: None,
             repr: repr.into(),
             payload: payload.into(),
         }
     }
 
+    #[cfg(feature = "proto-rpl")]
     pub(crate) fn forward(
         repr: impl Into<IpRepr>,
         payload: impl Into<IpPayload<'a>>,
@@ -647,7 +652,9 @@ impl Interface {
                 rand,
                 #[cfg(feature = "proto-rpl")]
                 rpl: super::RplInstance::new(config.rpl.unwrap()),
+                #[cfg(feature = "proto-rpl")]
                 rpl_parent_set: Default::default(),
+                #[cfg(feature = "proto-rpl")]
                 relations: Default::default(),
             },
         }
@@ -889,7 +896,7 @@ impl Interface {
         let min = Some(self.poll_at_rpl());
 
         #[cfg(not(feature = "proto-rpl"))]
-        let min = None;
+        let min: Option<Instant> = None;
 
         let inner = &mut self.inner;
 
