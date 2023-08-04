@@ -11,8 +11,8 @@ pub(crate) mod trickle;
 pub use lollipop::SequenceCounter;
 pub(crate) use neighbor_table::Parent;
 pub use rank::Rank;
-pub use trickle::TrickleTimer;
 pub(crate) use relations::RelationInfo;
+pub use trickle::TrickleTimer;
 
 use crate::time::{Duration, Instant};
 use crate::wire::{Ipv6Address, RplInstanceId, RplOptionRepr, RplRepr};
@@ -117,6 +117,17 @@ pub struct RootConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct Dao {
+    pub needs_sending: bool,
+    pub sent_at: Option<Instant>,
+    pub sent_count: u8,
+    pub to: Ipv6Address,
+    pub child: Ipv6Address,
+    pub parent: Option<Ipv6Address>,
+    pub sequence: Option<SequenceCounter>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RplInstance {
     pub(crate) is_root: bool,
     pub(crate) instance_id: RplInstanceId,
@@ -129,6 +140,10 @@ pub struct RplInstance {
 
     pub(crate) dio_timer: trickle::TrickleTimer,
     pub(crate) dis_expiration: Instant,
+    pub(crate) dao_expiration: Instant,
+
+    pub(crate) dao_ack: heapless::Vec<(Ipv6Address, SequenceCounter), 64>,
+    pub(crate) daos: heapless::Vec<Dao, 64>,
 
     pub(crate) parent_address: Option<Ipv6Address>,
     pub(crate) parent_rank: Option<rank::Rank>,
@@ -166,6 +181,11 @@ impl RplInstance {
             dio_timer: config.dio_timer,
             // TODO(thvdveld): we want to have it differently.
             dis_expiration: Instant::ZERO + Duration::from_secs(5),
+            // TODO(thvdveld): we want to have it differently.
+            dao_expiration: Instant::ZERO + Duration::from_secs(5),
+
+            dao_ack: Default::default(),
+            daos: Default::default(),
 
             parent_address: None,
             parent_rank: None,
@@ -191,6 +211,51 @@ impl RplInstance {
 
     pub fn has_parent(&self) -> bool {
         self.parent_address.is_some()
+    }
+
+    pub fn should_send_dao(&mut self, our_addr: Ipv6Address, now: Instant) -> bool {
+        if self.has_parent() && !self.is_root && now >= self.dao_expiration {
+            // Retransmit a DAO every 28 minutes.
+            let path_lifetime = self.default_lifetime as u64 * self.lifetime_unit as u64;
+            self.dao_expiration =
+                now + Duration::from_secs((path_lifetime).checked_sub(60).unwrap_or(path_lifetime));
+
+            match self.mode_of_operation {
+                super::RplModeOfOperation::NoDownwardRoutesMaintained => (),
+                #[cfg(feature = "rpl-mop-1")]
+                super::RplModeOfOperation::NonStoringMode => {
+                    self.daos
+                        .push(Dao {
+                            needs_sending: true,
+                            sent_at: None,
+                            sent_count: 0,
+                            to: self.dodag_id.unwrap(),
+                            child: our_addr,
+                            parent: self.parent_address,
+                            sequence: None,
+                        })
+                        .unwrap();
+                }
+                #[cfg(feature = "rpl-mop-2")]
+                super::RplModeOfOperation::StoringModeWithoutMulticast => {
+                    self.daos
+                        .push(Dao {
+                            needs_sending: true,
+                            sent_at: None,
+                            sent_count: 0,
+                            to: self.parent_address.unwrap(),
+                            child: our_addr,
+                            parent: None,
+                            sequence: None,
+                        })
+                        .unwrap();
+                }
+                #[cfg(feature = "rpl-mop-3")]
+                super::RplModeOfOperation::StoringModeWithMulticast => todo!(),
+            }
+        }
+
+        !self.daos.is_empty()
     }
 
     pub fn should_send_dis(&self, now: Instant) -> bool {
@@ -263,7 +328,7 @@ impl RplInstance {
     ) -> RplRepr<'option> {
         RplRepr::DestinationAdvertisementObject {
             rpl_instance_id: self.instance_id,
-            expect_ack: false, // Make the expect-ack configureable.
+            expect_ack: true, // Make the expect-ack configureable.
             sequence: sequence.value(),
             dodag_id: Some(self.dodag_id.unwrap()),
             options,

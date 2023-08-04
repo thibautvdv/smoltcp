@@ -944,6 +944,8 @@ impl Interface {
     where
         D: Device + ?Sized,
     {
+        let our_addr = self.ipv6_addr().unwrap();
+
         let InterfaceInner { rpl, now, rand, .. } = &mut self.inner;
 
         if rpl.has_parent()
@@ -955,6 +957,14 @@ impl Interface {
             rpl.rank = super::rpl::rank::Rank::INFINITE;
 
             return self.transmit_rpl_dio(device);
+        }
+
+        if !rpl.dao_ack.is_empty() {
+            return self.transmit_rpl_dao_ack(device);
+        }
+
+        if rpl.should_send_dao(our_addr, *now) {
+            return self.transmit_rpl_dao(device);
         }
 
         // This is for transmitting DIS messages.
@@ -1265,6 +1275,136 @@ impl Interface {
                 Err(e) => {
                     net_debug!("Failed to send DIO: {:?}", e);
                     return false;
+                }
+            }
+        }
+
+        false
+    }
+
+    #[cfg(feature = "proto-rpl")]
+    fn transmit_rpl_dao<D>(&mut self, device: &mut D) -> bool
+    where
+        D: Device + ?Sized,
+    {
+        let our_addr = self.ipv6_addr().unwrap();
+
+        let InterfaceInner { rpl, now, .. } = &mut self.inner;
+
+        rpl.daos.iter_mut().for_each(|dao| {
+            if !dao.needs_sending {
+                if let Some(sent_at) = dao.sent_at {
+                    if sent_at + Duration::from_secs(60) < *now {
+                        dao.needs_sending = true;
+                    }
+                }
+            }
+        });
+
+        rpl.daos
+            .retain(|dao| !dao.needs_sending || dao.sent_count < 4);
+
+        let dao = if let Some(dao) = rpl.daos.iter_mut().find(|dao| dao.needs_sending) {
+            let mut options = heapless::Vec::new();
+            options
+                .push(RplOptionRepr::RplTarget {
+                    prefix_length: 64,
+                    prefix: dao.child,
+                })
+                .unwrap();
+            options
+                .push(RplOptionRepr::TransitInformation {
+                    external: false,
+                    path_control: 0,
+                    path_sequence: 0,
+                    path_lifetime: 0x30,
+                    parent_address: dao.parent,
+                })
+                .unwrap();
+
+            if dao.sequence.is_none() {
+                dao.sequence = Some(rpl.dao_seq_number);
+                rpl.dao_seq_number.increment();
+            }
+
+            dao.sent_at = Some(*now);
+            dao.sent_count += 1;
+            dao.needs_sending = false;
+            let sequence = dao.sequence.unwrap();
+            let to = dao.to;
+
+            let icmp = Icmpv6Repr::Rpl(rpl.destination_advertisement_object(sequence, options));
+
+            Some(IpPacket::new(
+                Ipv6Repr {
+                    src_addr: our_addr,
+                    dst_addr: to,
+                    next_header: IpProtocol::Icmpv6,
+                    payload_len: icmp.buffer_len(),
+                    hop_limit: 64,
+                },
+                icmp,
+            ))
+        } else {
+            None
+        };
+
+        if let Some(dao) = dao {
+            net_trace!("Transmitting DAO");
+            if let Some(tx_token) = device.transmit(self.inner.now) {
+                match self.inner.dispatch_ip(tx_token, dao, &mut self.fragmenter) {
+                    Ok(()) => return true,
+                    Err(e) => {
+                        net_debug!("Failed to send DAO: {:?}", e);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    #[cfg(feature = "proto-rpl")]
+    fn transmit_rpl_dao_ack<D>(&mut self, device: &mut D) -> bool
+    where
+        D: Device + ?Sized,
+    {
+        let our_addr = self.ipv6_addr().unwrap();
+
+        let InterfaceInner { rpl, .. } = &mut self.inner;
+
+        let dao_ack = if let Some((dst_addr, seq)) = rpl.dao_ack.pop() {
+            let icmp = Icmpv6Repr::Rpl(RplRepr::DestinationAdvertisementObjectAck {
+                rpl_instance_id: rpl.instance_id,
+                sequence: seq.value(),
+                status: 0,
+                dodag_id: rpl.dodag_id,
+            });
+
+            Some(IpPacket::new(
+                Ipv6Repr {
+                    src_addr: our_addr,
+                    dst_addr,
+                    next_header: IpProtocol::Icmpv6,
+                    payload_len: icmp.buffer_len(),
+                    hop_limit: 64,
+                },
+                icmp,
+            ))
+        } else {
+            None
+        };
+
+        if let Some(dao) = dao_ack {
+            net_trace!("Transmitting DAO-ACK");
+            if let Some(tx_token) = device.transmit(self.inner.now) {
+                match self.inner.dispatch_ip(tx_token, dao, &mut self.fragmenter) {
+                    Ok(()) => return true,
+                    Err(e) => {
+                        net_debug!("Failed to send DAO-ACK: {:?}", e);
+                        return false;
+                    }
                 }
             }
         }
@@ -1737,16 +1877,6 @@ impl InterfaceInner {
     }
 
     fn route(&self, addr: &IpAddress, timestamp: Instant) -> Option<IpAddress> {
-        #[cfg(feature = "proto-rpl")]
-        return match (self.routes.lookup(addr, timestamp), self.rpl.parent_address) {
-            (None, Some(a)) => Some(a.into()),
-            (Some(a), _) => Some(a),
-            _ => {
-                net_trace!("No route");
-                None
-            }
-        };
-
         // Send directly.
         if self.in_same_network(addr) || addr.is_broadcast() {
             return Some(*addr);
@@ -1837,6 +1967,22 @@ impl InterfaceInner {
             }
         };
 
+        #[cfg(feature = "proto-rpl")]
+        let dst_addr = if let IpAddress::Ipv6(dst_addr) = dst_addr {
+            if let Some(next_hop) = self.relations.find_next_hop(&dst_addr) {
+                net_trace!("Next hop {}", next_hop);
+                if next_hop == self.ipv6_addr().unwrap() {
+                    dst_addr.into()
+                } else {
+                    next_hop.into()
+                }
+            } else {
+                dst_addr.into()
+            }
+        } else {
+            dst_addr
+        };
+
         match self.neighbor_cache.lookup(&dst_addr, self.now) {
             NeighborAnswer::Found(hardware_addr) => return Ok((hardware_addr, tx_token)),
             NeighborAnswer::RateLimited => {
@@ -1875,10 +2021,13 @@ impl InterfaceInner {
 
                 #[cfg(all(feature = "proto-ipv6", feature = "proto-rpl"))]
                 (&IpAddress::Ipv6(src_addr), IpAddress::Ipv6(dst_addr)) => {
-                    // net_debug!("address {} not in neighbor cache", dst_addr);
-                    // net_debug!("Current neighbor cache is:");
-                    // net_debug!("{:?}", self.neighbor_cache);
-                    return Err(DispatchError::NeighborPending);
+                    if let Some(parent) = self.rpl.parent_address {
+                        if let NeighborAnswer::Found(hardware_addr) =
+                            self.neighbor_cache.lookup(&parent.into(), self.now)
+                        {
+                            return Ok((hardware_addr, tx_token));
+                        }
+                    }
                 }
 
                 #[cfg(all(feature = "proto-ipv6", not(feature = "proto-rpl")))]

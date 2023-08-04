@@ -134,7 +134,6 @@ pub(crate) enum ParentEntry {
 pub(crate) struct Parent {
     pub(crate) rank: Rank,
     pub(crate) ip_addr: Ipv6Address,
-    pub(crate) preference: u8,
     pub(crate) version_number: SequenceCounter,
 }
 
@@ -148,17 +147,12 @@ impl Parent {
         Self {
             ip_addr,
             rank,
-            preference: preference.unwrap_or(0),
             version_number,
         }
     }
 
     pub fn update_rank(&mut self, rank: Rank) {
         self.rank = rank;
-    }
-
-    pub fn update_preference(&mut self, preference: u8) {
-        self.preference = preference;
     }
 
     pub fn update_version_number(&mut self, version_number: SequenceCounter) {
