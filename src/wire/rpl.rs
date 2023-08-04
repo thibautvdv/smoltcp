@@ -179,7 +179,7 @@ impl<'p, T: AsRef<[u8]> + ?Sized> Packet<&'p T> {
                 return Err(Error)
             }
             RplControlMessage::DestinationAdvertisementObjectAck
-                if self.dao_dodag_id_present() && len < field::DAO_ACK_DODAG_ID.end =>
+                if self.dao_ack_dodag_id_present() && len < field::DAO_ACK_DODAG_ID.end =>
             {
                 return Err(Error)
             }
@@ -205,7 +205,7 @@ impl<'p, T: AsRef<[u8]> + ?Sized> Packet<&'p T> {
                 &buffer[field::DAO_DODAG_ID.end..]
             }
             RplControlMessage::DestinationAdvertisementObject => &buffer[field::DAO_SEQUENCE + 1..],
-            RplControlMessage::DestinationAdvertisementObjectAck if self.dao_dodag_id_present() => {
+            RplControlMessage::DestinationAdvertisementObjectAck if self.dao_ack_dodag_id_present() => {
                 &buffer[field::DAO_ACK_DODAG_ID.end..]
             }
             RplControlMessage::DestinationAdvertisementObjectAck => {
@@ -247,7 +247,7 @@ impl<'p, T: AsRef<[u8]> + AsMut<[u8]> + ?Sized> Packet<&'p mut T> {
                 }
             }
             RplControlMessage::DestinationAdvertisementObjectAck => {
-                if self.dao_dodag_id_present() {
+                if self.dao_ack_dodag_id_present() {
                     &mut self.buffer.as_mut()[field::DAO_ACK_DODAG_ID.end..]
                 } else {
                     &mut self.buffer.as_mut()[field::DAO_ACK_STATUS + 1..]
@@ -539,7 +539,7 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Returns the flag indicating that the DODAG ID is present or not.
     #[inline]
     pub fn dao_ack_dodag_id_present(&self) -> bool {
-        get!(self.buffer, bool, field: field::DAO_ACK_D, shift: 6, mask: 0b1)
+        get!(self.buffer, bool, field: field::DAO_ACK_D, shift: 7, mask: 0b1)
     }
 
     /// Return the DODAG sequence number.
@@ -572,7 +572,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the flag indicating that the DODAG ID is present or not.
     #[inline]
     pub fn set_dao_ack_dodag_id_present(&mut self, value: bool) {
-        set!(self.buffer, value, bool, field: field::DAO_ACK_D, shift: 6, mask: 0b1)
+        set!(self.buffer, value, bool, field: field::DAO_ACK_D, shift: 7, mask: 0b1)
     }
 
     /// Set the DODAG sequence number.
