@@ -485,17 +485,26 @@ impl InterfaceInner {
                     && !self.rpl.is_root
                 {
                     net_trace!("[RPL DAO] forwarding DAO to root");
-                    // Forward the DAO to the root, via our parent.
-                    return Some(IpPacket::forward(
-                        ip_repr,
-                        Icmpv6Repr::Rpl(repr),
-                        self.rpl.parent_address,
-                        Some(RplHopByHopRepr {
+                    let mut options = heapless::Vec::new();
+                    options
+                        .push(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
                             down: false,
                             rank_error: false,
                             forwarding_error: false,
                             instance_id: self.rpl.instance_id,
                             sender_rank: self.rpl.rank.raw_value(),
+                        }))
+                        .unwrap();
+
+                    // Forward the DAO to the root, via our parent.
+                    return Some(IpPacket::forward(
+                        ip_repr,
+                        Icmpv6Repr::Rpl(repr),
+                        self.rpl.parent_address,
+                        Some(Ipv6ExtHeaderRepr {
+                            next_header: todo!(),
+                            length: todo!(),
+                            options,
                         }),
                     ));
                 }
@@ -705,19 +714,8 @@ impl InterfaceInner {
             hbh.rank_error = true;
         }
 
-        // If the packet is not for us, we forward the packet.
-        if ipv6_repr.dst_addr.is_unicast() && !self.has_ip_addr(ipv6_repr.dst_addr) {
-            // Replace the next header field in the IPv6 header by the next header of the
-            // hop-by-hop header.
-            ipv6_repr.next_header = ext_hdr.next_header;
-
-            return self.forward(
-                ipv6_repr,
-                &ip_payload[ext_hdr.data.len() + 2..],
-                None,
-                Some(hbh),
-            );
-        }
+        // Set the sender rank to our own now.
+        hbh.sender_rank = self.rpl.rank.raw_value();
 
         self.process_nxt_hdr(
             sockets,
@@ -725,7 +723,12 @@ impl InterfaceInner {
             ipv6_repr,
             ext_hdr.next_header,
             false,
-            &ip_payload[ext_hdr.data.len() + 2..],
+            &ip_payload[ext_hdr
+                .options
+                .iter()
+                .map(|o| o.buffer_len())
+                .sum::<usize>()
+                + 2..],
         )
     }
 

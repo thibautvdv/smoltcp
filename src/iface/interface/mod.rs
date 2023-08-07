@@ -331,7 +331,7 @@ pub struct IpPacket<'a> {
     forwarding: Option<Ipv6Address>,
     routing: Option<Ipv6RoutingRepr>,
     #[cfg(feature = "proto-rpl")]
-    hbh: Option<RplHopByHopRepr>,
+    hbh: Option<Ipv6ExtHeaderRepr<'a>>,
     repr: IpRepr,
     payload: IpPayload<'a>,
 }
@@ -421,7 +421,7 @@ impl<'a> IpPacket<'a> {
         repr: impl Into<IpRepr>,
         payload: impl Into<IpPayload<'a>>,
         to: Option<Ipv6Address>,
-        hbh: Option<RplHopByHopRepr>,
+        hbh: Option<Ipv6ExtHeaderRepr<'a>>,
     ) -> Self {
         Self {
             forwarding: to,
@@ -2103,12 +2103,20 @@ impl InterfaceInner {
                             IpAddress::Ipv6(addr) => addr,
                         };
 
-                        packet.hbh = Some(RplHopByHopRepr {
-                            down: self.relations.find_next_hop(&dst).is_some(),
-                            rank_error: false,
-                            forwarding_error: false,
-                            instance_id: self.rpl.instance_id,
-                            sender_rank: self.rpl.rank.raw_value(),
+                        let mut options = heapless::Vec::new();
+                        options
+                            .push(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
+                                down: self.relations.find_next_hop(&dst).is_some(),
+                                rank_error: false,
+                                forwarding_error: false,
+                                instance_id: self.rpl.instance_id,
+                                sender_rank: self.rpl.rank.raw_value(),
+                            }))
+                            .unwrap();
+                        packet.hbh = Some(Ipv6ExtHeaderRepr {
+                            next_header: packet.ip_repr().next_header(),
+                            length: (options.iter().map(|o| o.buffer_len()).sum::<usize>() / 8 ) as u8,
+                            options,
                         });
                     }
 

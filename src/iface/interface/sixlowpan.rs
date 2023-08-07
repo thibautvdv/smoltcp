@@ -307,16 +307,6 @@ impl InterfaceInner {
 
         let mut payload_len = ip_repr.payload_len;
 
-        #[cfg(feature = "proto-rpl")]
-        let hop_by_hop = if packet.routing.is_none() {
-            packet.hbh.map(Ipv6OptionRepr::Rpl)
-        } else {
-            None
-        };
-
-        #[cfg(not(feature = "proto-rpl"))]
-        let hop_by_hop: Option<Ipv6OptionRepr> = None;
-
         let next_header = packet.as_sixlowpan_next_header();
 
         let iphc = SixlowpanIphcRepr {
@@ -324,7 +314,7 @@ impl InterfaceInner {
             ll_src_addr: ieee_repr.src_addr,
             dst_addr: ip_repr.dst_addr,
             ll_dst_addr: ieee_repr.dst_addr,
-            next_header: if packet.routing.is_some() || hop_by_hop.is_some() {
+            next_header: if packet.routing.is_some() || packet.hbh.is_some() {
                 SixlowpanNextHeader::Compressed
             } else {
                 next_header
@@ -339,6 +329,22 @@ impl InterfaceInner {
         compressed_hdr_size += iphc.buffer_len();
         uncompressed_hdr_size += ip_repr.buffer_len();
 
+        // Add the hop-by-hop to the sizes.
+        if let Some(hbh) = &packet.hbh {
+            let options_size = hbh.options.iter().map(|o| o.buffer_len()).sum::<usize>();
+
+            let ext_hdr = SixlowpanExtHeaderRepr {
+                ext_header_id: SixlowpanExtHeaderId::HopByHopHeader,
+                next_header,
+                length: hbh.buffer_len() as u8 + options_size as u8,
+            };
+
+            total_size += ext_hdr.buffer_len() + options_size;
+            compressed_hdr_size += ext_hdr.buffer_len() + options_size;
+            uncompressed_hdr_size += hbh.buffer_len() + options_size;
+        }
+
+        // Add the routing header to the sizes.
         if let Some(routing) = &packet.routing {
             let ext_hdr = SixlowpanExtHeaderRepr {
                 ext_header_id: SixlowpanExtHeaderId::RoutingHeader,
@@ -347,31 +353,7 @@ impl InterfaceInner {
             };
             total_size += ext_hdr.buffer_len() + routing.buffer_len();
             compressed_hdr_size += ext_hdr.buffer_len() + routing.buffer_len();
-            uncompressed_hdr_size += Ipv6ExtHeaderRepr {
-                next_header: ip_repr.next_header,
-                length: ext_hdr.length / 8,
-                data: &[],
-            }
-            .buffer_len()
-                + routing.buffer_len();
-        }
-
-        // Add the hop-by-hop to the sizes.
-        if let Some(hbh) = hop_by_hop {
-            let ext_hdr = SixlowpanExtHeaderRepr {
-                ext_header_id: SixlowpanExtHeaderId::HopByHopHeader,
-                next_header,
-                length: hbh.buffer_len() as u8,
-            };
-            total_size += ext_hdr.buffer_len() + hbh.buffer_len();
-            compressed_hdr_size += ext_hdr.buffer_len() + hbh.buffer_len();
-            uncompressed_hdr_size += Ipv6ExtHeaderRepr {
-                next_header: ip_repr.next_header,
-                length: ext_hdr.length / 8,
-                data: &[],
-            }
-            .buffer_len()
-                + hbh.buffer_len();
+            uncompressed_hdr_size += routing.buffer_len();
         }
 
         match packet.payload {
@@ -405,16 +387,6 @@ impl InterfaceInner {
             IpRepr::Ipv6(repr) => repr.clone(),
         };
 
-        #[cfg(feature = "proto-rpl")]
-        let hop_by_hop = if packet.routing.is_none() {
-            packet.hbh.map(Ipv6OptionRepr::Rpl)
-        } else {
-            None
-        };
-
-        #[cfg(not(feature = "proto-rpl"))]
-        let hop_by_hop: Option<Ipv6OptionRepr> = None;
-
         let next_header = packet.as_sixlowpan_next_header();
 
         let iphc_repr = SixlowpanIphcRepr {
@@ -422,7 +394,7 @@ impl InterfaceInner {
             ll_src_addr: ieee_repr.src_addr,
             dst_addr: ip_repr.dst_addr,
             ll_dst_addr: ieee_repr.dst_addr,
-            next_header: if packet.routing.is_some() || hop_by_hop.is_some() {
+            next_header: if packet.routing.is_some() || packet.hbh.is_some() {
                 SixlowpanNextHeader::Compressed
             } else {
                 next_header
@@ -438,7 +410,28 @@ impl InterfaceInner {
         ));
         buffer = &mut buffer[iphc_repr.buffer_len()..];
 
-        // Emit the Hop-by-Hop header, required for RPL
+        // Emit the Hop-by-Hop header
+        if let Some(hbh) = packet.hbh {
+            let ext_hdr = SixlowpanExtHeaderRepr {
+                ext_header_id: SixlowpanExtHeaderId::HopByHopHeader,
+                next_header,
+                length: hbh.options.iter().map(|o| o.buffer_len()).sum::<usize>() as u8,
+            };
+            ext_hdr.emit(&mut SixlowpanExtHeaderPacket::new_unchecked(
+                &mut buffer[..ext_hdr.buffer_len()],
+            ));
+            buffer = &mut buffer[ext_hdr.buffer_len()..];
+
+            for opt in &hbh.options {
+                opt.emit(&mut Ipv6Option::new_unchecked(
+                    &mut buffer[..opt.buffer_len()],
+                ));
+
+                buffer = &mut buffer[opt.buffer_len()..];
+            }
+        }
+
+        // Emit the Routing header
         if let Some(routing) = &packet.routing {
             let ext_hdr = SixlowpanExtHeaderRepr {
                 ext_header_id: SixlowpanExtHeaderId::RoutingHeader,
@@ -454,24 +447,6 @@ impl InterfaceInner {
                 &mut buffer[..routing.buffer_len()],
             ));
             buffer = &mut buffer[routing.buffer_len()..];
-        }
-
-        // Emit the Hop-by-Hop header, required for RPL
-        if let Some(hbh) = hop_by_hop {
-            let ext_hdr = SixlowpanExtHeaderRepr {
-                ext_header_id: SixlowpanExtHeaderId::HopByHopHeader,
-                next_header,
-                length: hbh.buffer_len() as u8,
-            };
-            ext_hdr.emit(&mut SixlowpanExtHeaderPacket::new_unchecked(
-                &mut buffer[..ext_hdr.buffer_len()],
-            ));
-            buffer = &mut buffer[ext_hdr.buffer_len()..];
-
-            hbh.emit(&mut Ipv6Option::new_unchecked(
-                &mut buffer[..hbh.buffer_len()],
-            ));
-            buffer = &mut buffer[hbh.buffer_len()..];
         }
 
         match &mut packet.payload {
@@ -637,10 +612,18 @@ impl InterfaceInner {
                         };
                         next_header = Some(ext_repr.next_header);
 
+                        let mut options = heapless::Vec::new();
+                        let options_bytes = &ext_hdr.payload()[..ext_repr.length as usize];
+                        let iter = Ipv6OptionsIterator::new(options_bytes);
+                        for opt in iter {
+                            let opt = opt?;
+                            options.push(opt).unwrap();
+                        }
+
                         let ipv6_ext_rpr = Ipv6ExtHeaderRepr {
                             next_header: nh,
                             length: ext_repr.length / 8,
-                            data: &ext_hdr.payload()[..ext_repr.length as usize],
+                            options,
                         };
                         ipv6_ext_rpr.emit(&mut Ipv6ExtHeader::new_unchecked(
                             &mut buffer[..ipv6_ext_rpr.buffer_len()],

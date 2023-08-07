@@ -121,12 +121,12 @@ impl<'a, T: AsRef<[u8]> + AsMut<[u8]> + ?Sized> Header<&'a mut T> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Repr<'a> {
     pub next_header: IpProtocol,
     pub length: u8,
-    pub data: &'a [u8],
+    pub options: heapless::Vec<super::Ipv6OptionRepr<'a>, 4>,
 }
 
 impl<'a> Repr<'a> {
@@ -135,10 +135,18 @@ impl<'a> Repr<'a> {
     where
         T: AsRef<[u8]> + ?Sized,
     {
+        let mut options = heapless::Vec::new();
+        let mut iter = super::Ipv6OptionsIterator::new(header.payload());
+
+        for opt_repr in iter.next() {
+            let opt_repr = opt_repr?;
+            options.push(opt_repr).unwrap();
+        }
+
         Ok(Self {
             next_header: header.next_header(),
             length: header.header_len(),
-            data: header.payload(),
+            options,
         })
     }
 
@@ -264,7 +272,7 @@ mod test {
             Repr {
                 next_header: IpProtocol::Tcp,
                 length: 0,
-                data: &REPR_PACKET_PAD4[2..]
+                options: &REPR_PACKET_PAD4[2..]
             }
         );
 
@@ -275,7 +283,7 @@ mod test {
             Repr {
                 next_header: IpProtocol::Tcp,
                 length: 1,
-                data: &REPR_PACKET_PAD12[2..]
+                options: &REPR_PACKET_PAD12[2..]
             }
         );
     }
@@ -285,7 +293,7 @@ mod test {
         let repr = Repr {
             next_header: IpProtocol::Tcp,
             length: 0,
-            data: &REPR_PACKET_PAD4[2..],
+            options: &REPR_PACKET_PAD4[2..],
         };
         let mut bytes = [0u8; 2];
         let mut header = Header::new_unchecked(&mut bytes);
@@ -295,7 +303,7 @@ mod test {
         let repr = Repr {
             next_header: IpProtocol::Tcp,
             length: 1,
-            data: &REPR_PACKET_PAD12[2..],
+            options: &REPR_PACKET_PAD12[2..],
         };
         let mut bytes = [0u8; 2];
         let mut header = Header::new_unchecked(&mut bytes);

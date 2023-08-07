@@ -261,16 +261,14 @@ impl InterfaceInner {
         &mut self,
         sockets: &mut SocketSet,
         ll_src_addr: Option<HardwareAddress>,
-        ipv6_repr: Ipv6Repr,
+        mut ipv6_repr: Ipv6Repr,
         ip_payload: &'frame [u8],
     ) -> Option<IpPacket<'frame>> {
         let ext_hdr = check!(Ipv6ExtHeader::new_checked(ip_payload));
 
         let hbh_repr = check!(Ipv6ExtHeaderRepr::parse(&ext_hdr));
-        let hbh_options = Ipv6OptionsIterator::new(hbh_repr.data);
 
-        for opt_repr in hbh_options {
-            let opt_repr = check!(opt_repr);
+        for opt_repr in &hbh_repr.options {
             match opt_repr {
                 Ipv6OptionRepr::Pad1 | Ipv6OptionRepr::PadN(_) => (),
                 #[cfg(feature = "proto-rpl")]
@@ -279,14 +277,14 @@ impl InterfaceInner {
                         sockets,
                         ll_src_addr,
                         ipv6_repr,
-                        hbh_repr,
-                        rpl_hop_by_hop,
+                        hbh_repr.clone(),
+                        *rpl_hop_by_hop,
                         ip_payload,
                     );
                 }
 
                 Ipv6OptionRepr::Unknown { type_, .. } => {
-                    match Ipv6OptionFailureType::from(type_) {
+                    match Ipv6OptionFailureType::from(*type_) {
                         Ipv6OptionFailureType::Skip => (),
                         Ipv6OptionFailureType::Discard => {
                             return None;
@@ -300,6 +298,22 @@ impl InterfaceInner {
                 }
             }
         }
+
+        // If the packet is not for us, we forward the packet.
+        if ipv6_repr.dst_addr.is_unicast() && !self.has_ip_addr(ipv6_repr.dst_addr) {
+            net_debug!("Packet not for me");
+            // Replace the next header field in the IPv6 header by the next header of the
+            // hop-by-hop header.
+            ipv6_repr.next_header = hbh_repr.next_header;
+
+            return self.forward(
+                ipv6_repr,
+                &ip_payload[hbh_repr.buffer_len() + hbh_repr.options.len()..],
+                None,
+                Some(hbh_repr),
+            );
+        }
+
         self.process_nxt_hdr(
             sockets,
             ll_src_addr,
@@ -430,21 +444,14 @@ impl InterfaceInner {
         mut ip_repr: Ipv6Repr,
         payload: &'frame [u8],
         mut routing: Option<Ipv6RoutingRepr>,
-        mut hbh: Option<RplHopByHopRepr>,
+        mut hbh: Option<Ipv6ExtHeaderRepr<'frame>>,
     ) -> Option<IpPacket<'frame>> {
         use crate::iface::RplModeOfOperation;
 
-        let InterfaceInner { rpl, .. } = self;
-
-        // Change the sender rank to our own rank.
-        if let Some(hbh) = &mut hbh {
-            hbh.sender_rank = self.rpl.rank.raw_value();
-        }
-
         let forward_to = match self.rpl.mode_of_operation {
-            RplModeOfOperation::NoDownwardRoutesMaintained if rpl.has_parent() => {
+            RplModeOfOperation::NoDownwardRoutesMaintained if self.rpl.has_parent() => {
                 net_trace!("[FORWARDING] forwarding to parent");
-                rpl.parent_address.unwrap()
+                self.rpl.parent_address.unwrap()
             }
 
             RplModeOfOperation::NoDownwardRoutesMaintained => {
@@ -510,8 +517,8 @@ impl InterfaceInner {
                 ip_repr.dst_addr
             }
             #[cfg(feature = "rpl-mop-1")]
-            RplModeOfOperation::NonStoringMode if rpl.parent_address.is_some() => {
-                rpl.parent_address.unwrap()
+            RplModeOfOperation::NonStoringMode if self.rpl.parent_address.is_some() => {
+                self.rpl.parent_address.unwrap()
             }
             #[cfg(feature = "rpl-mop-1")]
             RplModeOfOperation::NonStoringMode => {
@@ -523,12 +530,6 @@ impl InterfaceInner {
             RplModeOfOperation::StoringModeWithoutMulticast
                 if self.relations.find_next_hop(&ip_repr.dst_addr).is_some() =>
             {
-                // First look if we know that the destination is in our sub-tree.
-                // Otherwise, try to send it up to our parent.
-                if let Some(hbh) = &mut hbh {
-                    hbh.down = true;
-                }
-
                 let nh = self.relations.find_next_hop(&ip_repr.dst_addr).unwrap();
                 let nh = if nh == self.ipv6_addr().unwrap() {
                     ip_repr.dst_addr
@@ -544,12 +545,9 @@ impl InterfaceInner {
                 nh
             }
             #[cfg(feature = "rpl-mop-2")]
-            RplModeOfOperation::StoringModeWithoutMulticast if rpl.has_parent() => {
+            RplModeOfOperation::StoringModeWithoutMulticast if self.rpl.has_parent() => {
                 net_trace!("[FORWARDING] forwarding to parent");
-                if let Some(hbh) = &mut hbh {
-                    hbh.down = false;
-                }
-                rpl.parent_address.unwrap()
+                self.rpl.parent_address.unwrap()
             }
             #[cfg(feature = "rpl-mop-2")]
             RplModeOfOperation::StoringModeWithoutMulticast => {
