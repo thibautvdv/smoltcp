@@ -43,7 +43,9 @@ impl InterfaceInner {
                     None,
                     &mut f.decompress_buf,
                 ) {
-                    Ok(len) => &f.decompress_buf[..len],
+                    Ok(len) => {
+                        &f.decompress_buf[..len]
+                    }
                     Err(e) => {
                         net_debug!("sixlowpan decompress failed: {:?}", e);
                         return None;
@@ -383,11 +385,11 @@ impl InterfaceInner {
                 );
 
                 let payload = &buffer[..icmp_repr.buffer_len()];
-                let mut compressed = vec![0u8; 48];
+                let mut compressed = [0u8; 128];
                 let compressed = SixlowpanGhc::compress(
+                    iphc.src_addr.as_bytes(),
+                    iphc.dst_addr.as_bytes(),
                     payload,
-                    &iphc.src_addr,
-                    &iphc.dst_addr,
                     &mut compressed,
                 );
 
@@ -499,11 +501,11 @@ impl InterfaceInner {
                 );
 
                 let payload = &b[..icmp_repr.buffer_len()];
-                let mut compressed = vec![0u8; 48];
+                let mut compressed = [0u8; 128];
                 let compressed = SixlowpanGhc::compress(
+                    iphc_repr.src_addr.as_bytes(),
+                    iphc_repr.dst_addr.as_bytes(),
                     payload,
-                    &iphc_repr.src_addr,
-                    &iphc_repr.dst_addr,
                     &mut compressed,
                 );
 
@@ -617,17 +619,11 @@ impl InterfaceInner {
                         // This field is already checked by the dispatch function, however,
                         // maybe there are not enough bytes following the dispatch field and
                         // we get an out-of-bounds panic.
-                        let mut decompressed = vec![0u8; 48];
                         let payload = &data[1..];
-                        let decompressed = SixlowpanGhc::decompress(
-                            payload,
-                            &iphc_repr.src_addr,
-                            &iphc_repr.dst_addr,
-                            &mut decompressed,
-                        );
+                        let decompressed = SixlowpanGhc::decompressed_buffer_size(payload);
 
                         decompressed_size -= &data[..].len();
-                        decompressed_size += decompressed.len();
+                        decompressed_size += decompressed - 48;
                         break;
                     }
                 },
@@ -748,12 +744,12 @@ impl InterfaceInner {
                         // This field is already checked by the dispatch function, however,
                         // maybe there are not enough bytes following the dispatch field and
                         // we get an out-of-bounds panic.
-                        let mut decompressed = vec![0u8; 48];
+                        let mut decompressed = [0u8; 128];
                         let payload = &data[1..];
                         let decompressed = SixlowpanGhc::decompress(
+                            iphc_repr.src_addr.as_bytes(),
+                            iphc_repr.dst_addr.as_bytes(),
                             payload,
-                            &iphc_repr.src_addr,
-                            &iphc_repr.dst_addr,
                             &mut decompressed,
                         );
 

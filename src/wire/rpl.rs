@@ -721,7 +721,7 @@ impl<'p> Repr<'p> {
     pub fn parse<T: AsRef<[u8]> + ?Sized>(packet: &Packet<&'p T>) -> Result<Self> {
         let mut options = heapless::Vec::new();
 
-        let mut iter = options::OptionsIterator::new(packet.options()?);
+        let iter = options::OptionsIterator::new(packet.options()?);
         for opt in iter {
             let opt = opt?;
             options.push(opt).unwrap();

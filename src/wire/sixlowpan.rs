@@ -2276,332 +2276,329 @@ pub mod nhc {
     pub mod ghc {
         use super::*;
         use crate::wire::Ipv6Address;
+        pub fn compress<'c>(
+            src_addr: &[u8],
+            dst_addr: &[u8],
+            src: &[u8],
+            dst: &'c mut [u8],
+        ) -> &'c [u8] {
+            init_buffer(src_addr, dst_addr, dst);
 
-        const COPY: u8 = 0x00;
-        const ZERO: u8 = 0x80;
-        const SET_BACKREF: u8 = 0xA0;
-        const BACKREF: u8 = 0xC0;
-        const DICO_SIZE: usize = 48;
-        const MAX_ZERO_SEQUENCE: usize = 17;
+            let mut compressor = Compressor {
+                copy_index: 48,
+                copy_count: 0,
+                compressed_len: 0,
+                i: 0,
+                src,
+                dst,
+            };
 
-        /// Initialize the compression/decompression dictionary.
-        pub fn dict_init(comp_buf: &mut [u8], src: &Ipv6Address, dst: &Ipv6Address) {
-            assert!(comp_buf.len() >= 48);
+            compressor.compress();
 
-            const STATIC_DICT: [u8; 16] = [
+            &compressor.dst[48..][..compressor.compressed_len]
+        }
+
+        pub fn decompress<'d>(
+            src_addr: &[u8],
+            dst_addr: &[u8],
+            src: &[u8],
+            dst: &'d mut [u8],
+        ) -> &'d [u8] {
+            init_buffer(src_addr, dst_addr, dst);
+
+            let mut p = 48;
+            let mut sa: usize = 0;
+            let mut na: usize = 0;
+
+            let mut i = 0;
+
+            while i < src.len() {
+                let b = src[i];
+                match b {
+                    0b00000000..=0b01111111 => {
+                        let k = b as usize;
+                        dst[p..][..k].copy_from_slice(&src[i + 1..][..k]);
+                        p += k;
+                        i += k;
+                    }
+                    0b10000000..=0b10001111 => {
+                        let n = (b & 0b00001111) as usize + 2;
+                        dst[p..][..n].iter_mut().for_each(|b| *b = 0);
+                        p += n;
+                    }
+                    0b10010000 => break,
+                    0b10100000..=0b10111111 => {
+                        na += (b & 0b00010000) as usize >> 1;
+                        sa += ((b & 0b00001111) as usize) << 3;
+                    }
+                    0b11000000..=0b11111111 => {
+                        let n = na + (((b & 0b00111000) as usize) >> 3) + 2;
+                        let s = ((b & 0b00000111) as usize) + sa + n;
+
+                        for j in 0..n {
+                            dst[p + j] = dst[p - s + j];
+                        }
+
+                        sa = 0;
+                        na = 0;
+
+                        p += n;
+                    }
+                    _ => unreachable!(),
+                }
+                i += 1;
+            }
+
+            &dst[48..p]
+        }
+
+        pub fn decompressed_buffer_size(src: &[u8]) -> usize {
+            let mut p = 48;
+            let mut na: usize = 0;
+
+            let mut i = 0;
+
+            while i < src.len() {
+                let b = src[i];
+                match b {
+                    0b00000000..=0b01111111 => {
+                        let k = b as usize;
+                        p += k;
+                        i += k;
+                    }
+                    0b10000000..=0b10001111 => {
+                        let n = (b & 0b00001111) as usize + 2;
+                        p += n;
+                    }
+                    0b10010000 => break,
+                    0b10100000..=0b10111111 => {
+                        na += (b & 0b00010000) as usize >> 1;
+                    }
+                    0b11000000..=0b11111111 => {
+                        let n = na + (((b & 0b00111000) as usize) >> 3) + 2;
+                        na = 0;
+                        p += n;
+                    }
+                    _ => unreachable!(),
+                }
+                i += 1;
+            }
+
+            p
+        }
+
+        const MAX_ZEROS_LEN: usize = 17;
+
+        struct Compressor<'s, 'd> {
+            copy_index: usize,
+            copy_count: usize,
+            compressed_len: usize,
+            i: usize,
+            src: &'s [u8],
+            dst: &'d mut [u8],
+        }
+
+        impl<'s, 'd> Compressor<'s, 'd> {
+            fn compress(&mut self) {
+                while self.i < self.src.len() {
+                    assert!(self.i + 1 < self.dst.len());
+                    assert!(self.copy_index < self.dst.len());
+                    // Count the maximum amount of concecutive zeros.
+                    let zeros = self.count_zeros();
+                    let (src_f, src_b, dst_f) = self.find_best_match();
+
+                    let len = src_b - src_f;
+                    let s = src_f + 48 - dst_f;
+
+                    if zeros != len
+                        && len > 0
+                        && ((len >= s) || (len > 2 && zeros < len) || (len < 10 && s < 10 + len))
+                    {
+                        if self.copy_count > 0 {
+                            self.copy_bytecode();
+                        }
+
+                        let n = len;
+
+                        if (n - 2) / 8 != 0 || (s - n) / 8 != 0 {
+                            let s = s - n;
+                            let sa = s / 8;
+                            let s = s - sa * 8;
+
+                            let n = n - 2;
+                            let na = n / 8;
+                            let n = n - na * 8;
+
+                            // We need to setup sa and na, so we need extended backref.
+                            self.extended_backref_bytecode(len, sa, na, s, n);
+                        } else {
+                            let s = s - n;
+                            let n = n - 2;
+
+                            // We can do a simple backref.
+                            self.backref_bytecode(len, s, n);
+                        }
+                    } else if zeros > 1 {
+                        if self.copy_count > 0 {
+                            self.copy_bytecode();
+                        }
+
+                        // We have enough zeros to compress them.
+                        self.zeros_bytecode(zeros);
+                    } else {
+                        // The match is too short and the amount of zeros is to low,
+                        // we continue copying data.
+                        self.update_copy();
+                        self.i += 1;
+                    }
+                }
+
+                if self.copy_count > 0 {
+                    self.copy_bytecode();
+                }
+            }
+
+            #[inline]
+            fn copy_bytecode(&mut self) {
+                //println!(
+                //"copy: {:0x} {:0x?}",
+                //self.copy_count,
+                //&self.src[self.copy_index - 48..][..self.copy_count]
+                //);
+
+                self.compressed_len += self.copy_count + 1;
+                self.copy_index += self.copy_count + 1;
+                self.copy_count = 0;
+            }
+
+            #[inline]
+            fn zeros_bytecode(&mut self, zeros: usize) {
+                let null = 0x80 + zeros as u8 - 2;
+                //println!("{zeros} nulls: {null:0x}");
+
+                self.dst[self.copy_index] = null;
+                self.copy_index += 1;
+                self.i += zeros;
+                self.compressed_len += 1;
+            }
+
+            #[inline]
+            fn extended_backref_bytecode(
+                &mut self,
+                match_len: usize,
+                sa: usize,
+                na: usize,
+                s: usize,
+                n: usize,
+            ) {
+                let setup = 0b10100000 | (na as u8) << 4 | sa as u8;
+                let backref = 0b11000000 | ((n as u8) << 3) | s as u8;
+                self.dst[self.copy_index] = setup;
+                self.dst[self.copy_index + 1] = backref;
+
+                //println!(
+                //"ref: {:0x?} -> ref 101nssss {na:0x} {sa:0x}/\
+                //11nnnkkk {n:0x} {s:0x}: {setup:0x} {backref:0x}",
+                //&self.src[self.i..][..match_len]
+                //);
+
+                self.copy_count = 0;
+                self.copy_index += 2;
+
+                self.i += match_len;
+                self.compressed_len += 2;
+            }
+
+            #[inline]
+            fn backref_bytecode(&mut self, match_len: usize, s: usize, n: usize) {
+                let backref = 0b11000000 | ((n as u8) << 3) | s as u8;
+                self.dst[self.copy_index] = backref;
+
+                //println!(
+                //"ref: {:0x?} -> 11nnnkkk {n:0x} {s:0x}: {backref:0x}",
+                //&self.src[self.i..][..match_len]
+                //);
+
+                self.copy_count = 0;
+                self.copy_index += 1;
+
+                self.i += match_len;
+                self.compressed_len += 1;
+            }
+
+            fn update_copy(&mut self) {
+                if self.copy_count > 95 {
+                    self.copy_bytecode();
+                }
+
+                self.copy_count += 1;
+                self.dst[self.copy_index + self.copy_count] = self.src[self.i];
+                self.dst[self.copy_index] = self.copy_count as u8;
+            }
+
+            fn count_zeros(&self) -> usize {
+                self.src[self.i..]
+                    .iter()
+                    .take(MAX_ZEROS_LEN)
+                    .take_while(|b| **b == 0)
+                    .count()
+            }
+
+            fn find_best_match(&self) -> (usize, usize, usize) {
+                let mut best_count = 0;
+                let mut src_f = 0;
+                let mut src_b = 0;
+                let mut dst_f = 0;
+
+                let haystack = &self.src[self.i..];
+                for j in 0..48 {
+                    assert!(j < self.dst.len());
+
+                    let needle = &self.dst[j..];
+                    let count = haystack
+                        .iter()
+                        .enumerate()
+                        .take_while(|(k, b)| needle[*k] == **b)
+                        .count();
+
+                    if count > 1 && best_count <= count {
+                        src_f = self.i;
+                        src_b = self.i + count;
+                        dst_f = j;
+                        best_count = count;
+                    }
+                }
+
+                for j in 0..self.i {
+                    assert!(j < self.src.len());
+
+                    let needle = &self.src[j..];
+                    let count = haystack
+                        .iter()
+                        .enumerate()
+                        .take(self.i - j)
+                        .take_while(|(k, b)| needle[*k] == **b)
+                        .count();
+
+                    if count > 1 && best_count <= count {
+                        src_f = self.i;
+                        src_b = self.i + count;
+                        dst_f = j + 48;
+                        best_count = count;
+                    }
+                }
+
+                (src_f, src_b, dst_f)
+            }
+        }
+
+        fn init_buffer(src_addr: &[u8], dst_addr: &[u8], dst: &mut [u8]) {
+            dst[..16].copy_from_slice(src_addr);
+            dst[16..32].copy_from_slice(dst_addr);
+            dst[32..][..16].copy_from_slice(&[
                 0x16, 0xfe, 0xfd, 0x17, 0xfe, 0xfd, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
                 0x00, 0x00,
-            ];
-
-            comp_buf[..16].copy_from_slice(&src.as_bytes()[..16]);
-            comp_buf[16..32].copy_from_slice(&dst.as_bytes()[..16]);
-            comp_buf[32..48].copy_from_slice(&STATIC_DICT[..16]);
-        }
-
-        pub fn decompress<'a>(
-            payload: &[u8],
-            src: &Ipv6Address,
-            dst: &Ipv6Address,
-            decompressed: &'a mut alloc::vec::Vec<u8>,
-        ) -> &'a [u8] {
-            dict_init(decompressed, src, dst);
-
-            let mut decomp_buf_index: usize = DICO_SIZE;
-
-            let mut na = 0x00;
-            let mut sa = 0x00;
-
-            let len = payload.len();
-
-            let mut i = 0;
-
-            while i < len {
-                if (payload[i] & 0x80) == COPY {
-                    /* Codebyte : 0kkkkkkk
-                    Action   : Append k = 0b0kkkkkkk bytes of data in the
-                               bytecode argument (k < 96) */
-                    for j in 0..payload[i] {
-                        decompressed.push(payload[i + 1 + (j as usize)]);
-                    }
-                    decomp_buf_index += payload[i] as usize;
-                    i += payload[i] as usize;
-                } else if (payload[i] & 0xF0) == ZERO {
-                    /* Codebyte : 1000nnnn
-                    Action   : Append 0b0000nnnn+2 bytes of zeroes */
-                    for _ in 0..((payload[i] & 0x0F) + 2) {
-                        decompressed.push(0x00);
-                    }
-                    decomp_buf_index += ((payload[i] & 0x0F) + 2) as usize;
-                } else if (payload[i] & 0xE0) == SET_BACKREF {
-                    /* Codebyte : 101nssss
-                    Action   : Set up extended arguments for a
-                               backreference: sa += 0b0ssss000,
-                               na += 0b0000n000 */
-                    na += (payload[i] & 0x10) >> 1;
-                    sa += (payload[i] & 0x0F) << 3;
-                } else if (payload[i] & 0xC0) == BACKREF {
-                    /* Codebyte : 11nnnkkk
-                    Action   : Backreference: n = na+0b00000nnn+2;
-                               s = 0b00000kkk+sa+n; append n bytes from
-                               previously output bytes, starting s bytes
-                               to the left of the current output pointer;
-                               set sa = 0, na = 0 */
-                    let n = na + ((payload[i] & 0x38) >> 3) + 2;
-                    let s = (payload[i] & 0x07) + sa + n;
-                    for j in 0..n {
-                        decompressed.push(decompressed[decomp_buf_index - s as usize + j as usize]);
-                    }
-                    decomp_buf_index += n as usize;
-                    na = 0x00;
-                    sa = 0x00
-                }
-                i += 1;
-                continue;
-            }
-
-            &decompressed[DICO_SIZE..]
-        }
-
-        pub fn compress<'a>(
-            payload: &[u8],
-            src: &Ipv6Address,
-            dst: &Ipv6Address,
-            compressed: &'a mut alloc::vec::Vec<u8>,
-        ) -> &'a [u8] {
-            let len = payload.len();
-            /* Initialize buffer with static dico followed by the payload */
-            let mut buffer = alloc::vec![0u8; DICO_SIZE + len];
-            dict_init(&mut buffer, src, dst);
-            buffer[DICO_SIZE..].copy_from_slice(payload);
-
-            let mut buffer_index = 0;
-            let mut copy_buffer = 0;
-            let mut payload_index = 0;
-
-            let mut i = 0;
-            while i < len {
-                /* Count zero sequence */
-                let mut zero_sequence = 0;
-                for (z, item) in payload.iter().enumerate().skip(i).take(MAX_ZERO_SEQUENCE) {
-                    if z < len && *item == 0x00 {
-                        zero_sequence += 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                /* Initialize variables for matches in dico */
-                let mut index = 0;
-                let mut index_best = 0;
-                let mut append = 0;
-                let mut append_best = 0;
-
-                let mut dictionary_index = 0;
-                /* Browse the dictionary and the buffer to find matches */
-                while dictionary_index < i + DICO_SIZE {
-                    /* Found a first match */
-                    if (payload_index < len)
-                        && (append == 0)
-                        && (i + DICO_SIZE - dictionary_index > 1)
-                        && (payload[payload_index] == buffer[dictionary_index])
-                    {
-                        /* Condition to avoid overflow */
-                        if payload_index + 1 < len {
-                            /* Found a matching pair */
-                            if payload[payload_index + 1] == buffer[dictionary_index + 1] {
-                                index = dictionary_index;
-                                append = 2;
-
-                                if append >= append_best {
-                                    append_best = append;
-                                    index_best = index;
-                                }
-
-                                payload_index += 2;
-                                dictionary_index += 2;
-
-                                continue;
-                            }
-                        }
-                    }
-                    /* Found another match following previous matching pair */
-                    else if (payload_index < len)
-                        && (append > 0)
-                        && (payload[payload_index] == buffer[dictionary_index])
-                    {
-                        append += 1;
-
-                        if append >= append_best {
-                            append_best = append;
-                            index_best = index;
-                        }
-
-                        payload_index += 1;
-                        dictionary_index += 1;
-
-                        continue;
-                    }
-                    /* No more following match found, set best match sequence */
-                    else if (payload_index < len)
-                        && (append > 0)
-                        && (payload[payload_index] != buffer[dictionary_index])
-                    {
-                        if append >= append_best {
-                            append_best = append;
-                            index_best = index;
-                        }
-                        payload_index = i;
-                        dictionary_index -= append - 1;
-                        append = 0;
-                        index = 0;
-
-                        continue;
-                    }
-                    /* No match */
-                    dictionary_index += 1;
-                }
-                /* Set payload index */
-                payload_index = i;
-                /* Matches found */
-                /* Zero seq in dico
-                 * Max offset for backref is 9
-                 * No condition */
-                if (append_best > zero_sequence)
-                    && ((append_best < 3 && (i + DICO_SIZE - index_best) < 10)
-                        || (append_best > 2)
-                            && (i + DICO_SIZE - index_best - append_best + 2 < 120)
-                            && (((i + DICO_SIZE - index_best - append_best + 2) % 120) >= 2)
-                            && (append_best - 2 < 127))
-                {
-                    /* Reset copy_buffer */
-                    if copy_buffer > 0 {
-                        copy_buffer = 0;
-                    }
-                    /* Initialize for backref */
-                    let mut backref: u8 = 0xc0;
-                    /* Initialize n and s for backref */
-                    let n = append_best - 2;
-                    let s = i + DICO_SIZE - index_best - n;
-
-                    /* Set up for extended backreference */
-                    if n > 7 || s > 9 {
-                        let mut extended_n = n / 8;
-                        let backref_n = n % 8;
-                        let mut extended_s = s / 120;
-                        let backref_s = s % 120;
-
-                        /* Set variable for extended_s and extended_n */
-                        while extended_s > 0 {
-                            let mut extend_backref = 0xa0;
-                            if extended_n > 0 {
-                                extend_backref += 0x10;
-                                extended_n -= 1;
-                            }
-                            extend_backref += 0xf;
-                            extended_s -= 1;
-                            if buffer_index >= compressed.len() {
-                                compressed.push(extend_backref);
-                            } else {
-                                compressed[buffer_index] = extend_backref;
-                            }
-                            buffer_index += 1;
-                        }
-                        /* No offset extended_s but backref_s  */
-                        let mut extend_backref = 0xa0;
-                        if extended_n > 0 {
-                            extend_backref += 0x10;
-                            extended_n -= 1;
-                        }
-                        extend_backref += (((backref_s - 2) & 0x78) >> 3) as u8;
-                        if buffer_index >= compressed.len() {
-                            compressed.push(extend_backref);
-                        } else {
-                            compressed[buffer_index] = extend_backref;
-                        }
-                        buffer_index += 1;
-                        /* No or no more offset extended_s but extended_n */
-                        while extended_n > 0 {
-                            let extend_backref = 0xb0;
-                            if buffer_index >= compressed.len() {
-                                compressed.push(extend_backref);
-                            } else {
-                                compressed[buffer_index] = extend_backref;
-                            }
-                            extended_n -= 1;
-                            buffer_index += 1;
-                        }
-                        /* Set up backreference for the extended arguments */
-                        backref += ((backref_n << 3) + ((backref_s - 2) & 0x07)) as u8;
-
-                        if buffer_index >= compressed.len() {
-                            compressed.push(backref);
-                        } else {
-                            compressed[buffer_index] = backref;
-                        }
-                        buffer_index += 1;
-                    }
-                    /* Set up backreference */
-                    else {
-                        backref += ((n << 3) + s - 2) as u8;
-                        if buffer_index >= compressed.len() {
-                            compressed.push(backref);
-                        } else {
-                            compressed[buffer_index] = backref;
-                        }
-                        buffer_index += 1;
-                    }
-
-                    payload_index += append_best;
-                    i += append_best - 1;
-                } else if zero_sequence > 1 {
-                    /* Zero sequence */
-                    if buffer_index >= compressed.len() {
-                        compressed.push((0x80 + zero_sequence - 2) as u8);
-                    } else {
-                        compressed[buffer_index] = (0x80 + zero_sequence - 2) as u8;
-                    }
-                    buffer_index += 1;
-
-                    payload_index += zero_sequence;
-
-                    copy_buffer = 0;
-                    i += zero_sequence - 1;
-                } else {
-                    /* No match found in the dico and no zero seq found */
-                    if copy_buffer == 0 {
-                        if buffer_index >= compressed.len() {
-                            compressed.push((copy_buffer + 1) as u8);
-                        } else {
-                            compressed[buffer_index] = (copy_buffer + 1) as u8;
-                        }
-                        buffer_index += 1;
-                        if buffer_index >= compressed.len() {
-                            compressed.push(payload[payload_index]);
-                        } else {
-                            compressed[buffer_index] = payload[payload_index];
-                        }
-                        copy_buffer += 1;
-                        buffer_index += 1;
-                        payload_index += 1;
-                    } else {
-                        compressed[buffer_index - copy_buffer - 1] = (copy_buffer + 1) as u8;
-                        if buffer_index >= compressed.len() {
-                            compressed.push(payload[payload_index]);
-                        } else {
-                            compressed[buffer_index] = payload[payload_index];
-                        }
-
-                        copy_buffer += 1;
-                        buffer_index += 1;
-                        payload_index += 1;
-                        if copy_buffer > 95 {
-                            copy_buffer = 0;
-                        }
-                    }
-                }
-                i += 1;
-            }
-            &compressed[..buffer_index]
+            ]);
         }
     }
 
@@ -2752,11 +2749,11 @@ pub mod nhc {
         pub fn compressed_payload_len(
             &self,
             payload: &[u8],
-            src_addr: &Ipv6Address,
-            dst_addr: &Ipv6Address,
+            src_addr: &[u8],
+            dst_addr: &[u8],
         ) -> usize {
-            let mut compressed = alloc::vec![0u8; 48];
-            let compressed = ghc::compress(payload, src_addr, dst_addr, &mut compressed);
+            let mut compressed = [0u8; 128];
+            let compressed = ghc::compress(src_addr, dst_addr, payload, &mut compressed);
             compressed.len()
         }
 

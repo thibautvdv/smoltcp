@@ -179,7 +179,7 @@ impl RplInstance {
 
             dio_timer: config.dio_timer,
             // TODO(thvdveld): we want to have it differently.
-            dis_expiration: Instant::ZERO + Duration::from_secs(5),
+            dis_expiration: Instant::ZERO + Duration::from_secs(1),
             // TODO(thvdveld): we want to have it differently.
             dao_expiration: Instant::ZERO + Duration::from_secs(5),
 
