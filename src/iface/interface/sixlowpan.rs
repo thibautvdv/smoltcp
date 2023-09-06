@@ -6,6 +6,8 @@ use crate::iface::rpl::lollipop;
 use crate::phy::ChecksumCapabilities;
 use crate::wire::*;
 
+use alloc::vec;
+
 // Max len of non-fragmented packets after decompression (including ipv6 header and payload)
 // TODO: lower. Should be (6lowpan mtu) - (min 6lowpan header size) + (max ipv6 header size)
 pub(crate) const MAX_DECOMPRESSED_LEN: usize = 1500;
@@ -358,6 +360,9 @@ impl InterfaceInner {
 
         match packet.payload {
             #[cfg(feature = "socket-udp")]
+            IpPayload::Udp(udp_hdr, payload) if self.use_sixlowpan_ghc => {
+                todo!();
+            }
             IpPayload::Udp(udp_hdr, payload) => {
                 uncompressed_hdr_size += udp_hdr.header_len();
 
@@ -365,6 +370,31 @@ impl InterfaceInner {
                 compressed_hdr_size += udp_hdr.header_len();
 
                 total_size += udp_hdr.header_len() + payload.len();
+            }
+            IpPayload::Icmpv6(ref icmp_repr) if self.use_sixlowpan_ghc => {
+                let mut buffer = [0; 127];
+                let mut icmp_packet =
+                    Icmpv6Packet::new_unchecked(&mut buffer[..icmp_repr.buffer_len()]);
+                icmp_repr.emit(
+                    &iphc.src_addr.into(),
+                    &iphc.dst_addr.into(),
+                    &mut icmp_packet,
+                    &ChecksumCapabilities::ignored(),
+                );
+
+                let payload = &buffer[..icmp_repr.buffer_len()];
+                let mut compressed = vec![0u8; 48];
+                let compressed = SixlowpanGhc::compress(
+                    payload,
+                    &iphc.src_addr,
+                    &iphc.dst_addr,
+                    &mut compressed,
+                );
+
+                compressed_hdr_size += compressed.len();
+                uncompressed_hdr_size += icmp_repr.buffer_len();
+
+                total_size += compressed.len();
             }
             _ => {
                 total_size += payload_len;
@@ -388,6 +418,14 @@ impl InterfaceInner {
         };
 
         let next_header = packet.as_sixlowpan_next_header();
+
+        let next_header = if next_header == SixlowpanNextHeader::Uncompressed(IpProtocol::Icmpv6)
+            && self.use_sixlowpan_ghc
+        {
+            SixlowpanNextHeader::Compressed
+        } else {
+            next_header
+        };
 
         let iphc_repr = SixlowpanIphcRepr {
             src_addr: ip_repr.src_addr,
@@ -450,6 +488,29 @@ impl InterfaceInner {
         }
 
         match &mut packet.payload {
+            IpPayload::Icmpv6(icmp_repr) if self.use_sixlowpan_ghc => {
+                let mut b = [0; 1500];
+                let mut icmp_packet = Icmpv6Packet::new_unchecked(&mut b[..icmp_repr.buffer_len()]);
+                icmp_repr.emit(
+                    &iphc_repr.src_addr.into(),
+                    &iphc_repr.dst_addr.into(),
+                    &mut icmp_packet,
+                    &ChecksumCapabilities::ignored(),
+                );
+
+                let payload = &b[..icmp_repr.buffer_len()];
+                let mut compressed = vec![0u8; 48];
+                let compressed = SixlowpanGhc::compress(
+                    payload,
+                    &iphc_repr.src_addr,
+                    &iphc_repr.dst_addr,
+                    &mut compressed,
+                );
+
+                buffer[0] = 0b11011111;
+                buffer[1..][..compressed.len()].copy_from_slice(compressed);
+            }
+
             IpPayload::Icmpv6(icmp_repr) => {
                 icmp_repr.emit(
                     &ip_repr.src_addr.into(),
@@ -513,6 +574,8 @@ impl InterfaceInner {
                             .into()
                     }
                     SixlowpanNhcPacket::UdpHeader => IpProtocol::Udp,
+                    SixlowpanNhcPacket::UdpGhcHeader => IpProtocol::Udp,
+                    SixlowpanNhcPacket::IcmpGhcHeader => IpProtocol::Icmpv6,
                 }
             }
             SixlowpanNextHeader::Uncompressed(proto) => proto,
@@ -544,6 +607,27 @@ impl InterfaceInner {
 
                         decompressed_size += 8;
                         decompressed_size -= udp_repr.header_len();
+                        break;
+                    }
+                    SixlowpanNhcPacket::UdpGhcHeader => {
+                        todo!();
+                    }
+                    SixlowpanNhcPacket::IcmpGhcHeader => {
+                        // TODO: we should first check that we can skip the dispatch field.
+                        // This field is already checked by the dispatch function, however,
+                        // maybe there are not enough bytes following the dispatch field and
+                        // we get an out-of-bounds panic.
+                        let mut decompressed = vec![0u8; 48];
+                        let payload = &data[1..];
+                        let decompressed = SixlowpanGhc::decompress(
+                            payload,
+                            &iphc_repr.src_addr,
+                            &iphc_repr.dst_addr,
+                            &mut decompressed,
+                        );
+
+                        decompressed_size -= &data[..].len();
+                        decompressed_size += decompressed.len();
                         break;
                     }
                 },
@@ -606,6 +690,8 @@ impl InterfaceInner {
                                             .into()
                                     }
                                     SixlowpanNhcPacket::UdpHeader => IpProtocol::Udp,
+                                    SixlowpanNhcPacket::UdpGhcHeader => IpProtocol::Udp,
+                                    SixlowpanNhcPacket::IcmpGhcHeader => IpProtocol::Icmpv6,
                                 }
                             }
                             SixlowpanNextHeader::Uncompressed(proto) => proto,
@@ -652,6 +738,26 @@ impl InterfaceInner {
                             .emit_header(&mut udp, rest_size - udp_repr.0.header_len()); // TODO
                         buffer[8..][..payload.len()].copy_from_slice(payload);
 
+                        break;
+                    }
+                    SixlowpanNhcPacket::UdpGhcHeader => {
+                        todo!();
+                    }
+                    SixlowpanNhcPacket::IcmpGhcHeader => {
+                        // TODO: we should first check that we can skip the dispatch field.
+                        // This field is already checked by the dispatch function, however,
+                        // maybe there are not enough bytes following the dispatch field and
+                        // we get an out-of-bounds panic.
+                        let mut decompressed = vec![0u8; 48];
+                        let payload = &data[1..];
+                        let decompressed = SixlowpanGhc::decompress(
+                            payload,
+                            &iphc_repr.src_addr,
+                            &iphc_repr.dst_addr,
+                            &mut decompressed,
+                        );
+
+                        buffer[..decompressed.len()].copy_from_slice(decompressed);
                         break;
                     }
                 },

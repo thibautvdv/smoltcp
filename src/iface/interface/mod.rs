@@ -242,6 +242,8 @@ pub struct InterfaceInner {
     now: Instant,
     rand: Rand,
 
+    use_sixlowpan_ghc: bool,
+
     #[cfg(any(feature = "medium-ethernet", feature = "medium-ieee802154"))]
     neighbor_cache: NeighborCache,
     hardware_addr: HardwareAddress,
@@ -626,6 +628,7 @@ impl Interface {
             },
             fragmenter: Fragmenter::new(),
             inner: InterfaceInner {
+                use_sixlowpan_ghc: false,
                 now: Instant::from_secs(0),
                 caps,
                 hardware_addr: config.hardware_addr,
@@ -1224,7 +1227,7 @@ impl Interface {
             hop_limit: 64,
         };
 
-        net_trace!("Transmitting DIS");
+        net_trace!("transmitting DIS");
         if let Some(tx_token) = device.transmit(self.inner.now) {
             match self.inner.dispatch_ip(
                 tx_token,
@@ -1264,7 +1267,7 @@ impl Interface {
             hop_limit: 64,
         };
 
-        net_trace!("Transmitting DIO");
+        net_trace!("transmitting DIO");
         if let Some(tx_token) = device.transmit(self.inner.now) {
             match self.inner.dispatch_ip(
                 tx_token,
@@ -1350,7 +1353,7 @@ impl Interface {
         };
 
         if let Some(dao) = dao {
-            net_trace!("Transmitting DAO");
+            net_trace!("transmitting DAO");
             if let Some(tx_token) = device.transmit(self.inner.now) {
                 match self.inner.dispatch_ip(tx_token, dao, &mut self.fragmenter) {
                     Ok(()) => return true,
@@ -1397,12 +1400,12 @@ impl Interface {
         };
 
         if let Some(dao) = dao_ack {
-            net_trace!("Transmitting DAO-ACK");
+            net_trace!("transmitting DAO-ACK");
             if let Some(tx_token) = device.transmit(self.inner.now) {
                 match self.inner.dispatch_ip(tx_token, dao, &mut self.fragmenter) {
                     Ok(()) => return true,
                     Err(e) => {
-                        net_debug!("Failed to send DAO-ACK: {:?}", e);
+                        net_debug!("failed to send DAO-ACK: {:?}", e);
                         return false;
                     }
                 }
@@ -1970,7 +1973,7 @@ impl InterfaceInner {
         #[cfg(feature = "proto-rpl")]
         let dst_addr = if let IpAddress::Ipv6(dst_addr) = dst_addr {
             if let Some(next_hop) = self.relations.find_next_hop(&dst_addr) {
-                net_trace!("Next hop {}", next_hop);
+                net_trace!("next hop {}", next_hop);
                 if next_hop == self.ipv6_addr().unwrap() {
                     dst_addr.into()
                 } else {
@@ -2115,7 +2118,8 @@ impl InterfaceInner {
                             .unwrap();
                         packet.hbh = Some(Ipv6ExtHeaderRepr {
                             next_header: packet.ip_repr().next_header(),
-                            length: (options.iter().map(|o| o.buffer_len()).sum::<usize>() / 8 ) as u8,
+                            length: (options.iter().map(|o| o.buffer_len()).sum::<usize>() / 8)
+                                as u8,
                             options,
                         });
                     }

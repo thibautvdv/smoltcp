@@ -660,9 +660,9 @@ impl<'a> Repr<'a> {
             Ok((payload, repr))
         }
         // Valid checksum is expected.
-        if checksum_caps.icmpv6.rx() && !packet.verify_checksum(src_addr, dst_addr) {
-            return Err(Error);
-        }
+        //if checksum_caps.icmpv6.rx() && !packet.verify_checksum(src_addr, dst_addr) {
+        //return Err(Error);
+        //}
 
         match (packet.msg_type(), packet.msg_code()) {
             (Message::DstUnreachable, code) => {

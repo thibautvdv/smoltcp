@@ -205,7 +205,9 @@ impl<'p, T: AsRef<[u8]> + ?Sized> Packet<&'p T> {
                 &buffer[field::DAO_DODAG_ID.end..]
             }
             RplControlMessage::DestinationAdvertisementObject => &buffer[field::DAO_SEQUENCE + 1..],
-            RplControlMessage::DestinationAdvertisementObjectAck if self.dao_ack_dodag_id_present() => {
+            RplControlMessage::DestinationAdvertisementObjectAck
+                if self.dao_ack_dodag_id_present() =>
+            {
                 &buffer[field::DAO_ACK_DODAG_ID.end..]
             }
             RplControlMessage::DestinationAdvertisementObjectAck => {

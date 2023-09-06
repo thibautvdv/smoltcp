@@ -160,7 +160,6 @@ pub struct RplInstance {
     pub(crate) objective_code_point: u16,
     pub(crate) default_lifetime: u8,
     pub(crate) lifetime_unit: u16,
-
     pub(crate) grounded: bool,
 
     pub(crate) dao_seq_number: lollipop::SequenceCounter,

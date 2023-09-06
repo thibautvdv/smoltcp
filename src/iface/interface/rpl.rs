@@ -85,11 +85,11 @@ impl InterfaceInner {
                                     && self.rpl.instance_id != *rpl_instance_id)
                                 || (*dodag_id_predicate && self.rpl.dodag_id != Some(*dodag_id))
                             {
-                                net_trace!("[RPL DIS] predicates did not match, dropping packet");
+                                net_trace!("RPL DIS: predicates did not match, dropping packet");
                                 return None;
                             }
                         }
-                        _ => net_trace!("[RPL DIS] received invalid option"),
+                        _ => net_trace!("RPL DIS: received invalid option"),
                     }
                 }
 
@@ -97,7 +97,7 @@ impl InterfaceInner {
                 // message, containing the DODAG Information option, without resetting the Trickle
                 // timer.
                 if ip_repr.dst_addr.is_unicast() {
-                    net_trace!("[RPL DIS] sending unicast DIO");
+                    net_trace!("RPL DIS: sending unicast DIO");
 
                     let mut options = heapless::Vec::new();
                     options.push(self.rpl.dodag_configuration()).unwrap();
@@ -115,7 +115,7 @@ impl InterfaceInner {
                         icmp,
                     ))
                 } else {
-                    net_trace!("[RPL DIS] resetting trickle timer");
+                    net_trace!("RPL DIS: resetting trickle timer");
 
                     // Resest the trickle timer (section 8.3)
                     self.rpl
@@ -162,7 +162,7 @@ impl InterfaceInner {
                         RplOptionRepr::DagMetricContainer => {
                             // NOTE(thvdveld): We don't support DAG Metric containers yet. They contain
                             // information about node, link or path metrics specified in RFC6551. The
-                            net_trace!("[RPL DIO] Dag Metric Container Option not yet supported");
+                            net_trace!("RPL DIO: Dag Metric Container Option not yet supported");
                         }
                         RplOptionRepr::RouteInformation { .. } => {
                             // The root of a DODAG is responsible for setting the option values.
@@ -172,7 +172,7 @@ impl InterfaceInner {
                             // packets, neither does it handle the route information packets from
                             // RFC4191. Therefore, the infrastructure is not in place for handling
                             // this option in RPL. This is considered future work!
-                            net_trace!("[RPL DIO] Route Information Option not yet supported");
+                            net_trace!("RPL DIO: Route Information Option not yet supported");
                         }
                         RplOptionRepr::DodagConfiguration {
                             objective_code_point,
@@ -183,7 +183,7 @@ impl InterfaceInner {
                             if self.rpl.parent_address.is_none()
                                 && *objective_code_point != self.rpl.objective_code_point
                             {
-                                net_trace!("[RPL DIO] dropping packet, OCP is not compatible");
+                                net_trace!("RPL DIO: dropping packet, OCP is not compatible");
                                 return None;
                             }
 
@@ -193,9 +193,9 @@ impl InterfaceInner {
                         // This information is propagated down the DODAG unchanged.
                         RplOptionRepr::PrefixInformation { .. } => {
                             // FIXME(thvdveld): handle a prefix information option.
-                            net_trace!("[RPL DIO] Prefix Information Option not yet supported");
+                            net_trace!("RPL DIO: Prefix Information Option not yet supported");
                         }
-                        _ => net_trace!("[RPL DIO] Received invalid option"),
+                        _ => net_trace!("RPL DIO: Received invalid option"),
                     }
                 }
 
@@ -219,12 +219,14 @@ impl InterfaceInner {
                     ) = dodag_configuration
                     {
                         if *objective_code_point == self.rpl.objective_code_point {
-                            net_trace!("[RPL DIO] accepting new RPL network settings");
-                            net_trace!("  - Grounded: {}", grounded);
-                            net_trace!("  - Preference: {}", dodag_preference);
-                            net_trace!("  - Version: {}", version_number);
-                            net_trace!("  - Instance ID: {:?}", rpl_instance_id);
-                            net_trace!("  - DODAG ID: {}", dodag_id);
+                            net_trace!(
+                                "RPL DIO: accepting new RPL conf (grounded={} pref={} version={} InstanceID={:?} DODAGID={})",
+                                grounded,
+                                dodag_preference,
+                                version_number,
+                                rpl_instance_id,
+                                dodag_id
+                            );
 
                             self.rpl.grounded = grounded;
                             self.rpl.mode_of_operation = mode_of_operation.into();
@@ -240,7 +242,7 @@ impl InterfaceInner {
                         }
                     } else {
                         // Send a unicast DIS.
-                        net_trace!("[RPL DIO] sending unicast DIS (to ask for DODAG Conf. option)");
+                        net_trace!("RPL DIO: sending unicast DIS (to ask for DODAG Conf. option)");
 
                         let icmp = Icmpv6Repr::Rpl(RplRepr::DodagInformationSolicitation {
                             options: Default::default(),
@@ -273,7 +275,7 @@ impl InterfaceInner {
                     || version_number < self.rpl.version_number.value()
                     || ModeOfOperation::from(mode_of_operation) != self.rpl.mode_of_operation
                 {
-                    net_trace!("[RPL DIO] dropping DIO packet");
+                    net_trace!("RPL DIO: dropping DIO packet");
                     return None;
                 }
 
@@ -286,15 +288,15 @@ impl InterfaceInner {
                 // received one. Then we reset the Trickle timer, such that the information is
                 // propagated in the network.
                 if SequenceCounter::new(version_number) > self.rpl.version_number {
-                    net_trace!("[RPL DIO] version number higher than ours");
+                    net_trace!("RPL DIO: version number higher than ours");
 
                     if self.rpl.is_root {
-                        net_trace!("[RPL DIO] (root) using new version number + 1");
+                        net_trace!("RPL DIO: (root) using new version number + 1");
 
                         self.rpl.version_number = SequenceCounter::new(version_number);
                         self.rpl.version_number.increment();
 
-                        net_trace!("[RPL DIO] resetting Trickle timer");
+                        net_trace!("RPL DIO: resetting Trickle timer");
                         // Reset the trickle timer.
                         self.rpl
                             .dio_timer
@@ -308,7 +310,7 @@ impl InterfaceInner {
                             Icmpv6Repr::Rpl(self.rpl.dodag_information_object(Default::default()));
 
                         net_trace!(
-                            "[RPL DIO] resetting parent set, resetting rank, \
+                            "RPL DIO: resetting parent set, resetting rank, \
                                 removing parent"
                         );
 
@@ -351,7 +353,7 @@ impl InterfaceInner {
                 // sending a DIO with an infinite rank.
                 if Some(ip_repr.src_addr) == self.rpl.parent_address {
                     if Rank::new(rank, self.rpl.rank.min_hop_rank_increase) == Rank::INFINITE {
-                        net_trace!("[RPL DIO] parent leaving, removing parent");
+                        net_trace!("RPL DIO: parent leaving, removing parent");
 
                         // Remove the parent from our parent set.
                         self.rpl_parent_set.remove_parent(&ip_repr.src_addr);
@@ -359,7 +361,7 @@ impl InterfaceInner {
                         // If the parent set is not empty, we can still select a new parent, which
                         // we do lower.
                         if self.rpl_parent_set.is_empty() {
-                            net_trace!("[RPL DIO] no potential parents, leaving network");
+                            net_trace!("RPL DIO: no potential parents, leaving network");
 
                             // DIO with INFINITE rank.
                             let src_addr = self.ipv6_addr().unwrap();
@@ -383,7 +385,7 @@ impl InterfaceInner {
                     } else {
                         // DTSN increased, so we need to transmit a DAO.
                         if SequenceCounter::new(dtsn) > self.rpl.dtsn {
-                            net_trace!("[RPL DIO] DTSN increased, scheduling DAO.");
+                            net_trace!("RPL DIO: DTSN increased, scheduling DAO.");
                             self.rpl.dao_expiration = self.now;
                         }
 
@@ -394,7 +396,7 @@ impl InterfaceInner {
                         // When we are not the root, we hear a consistency when the DIO message is from
                         // our parent and is valid. The validity of the message should be checked when we
                         // reach this line.
-                        net_trace!("[RPL DIO] hearing consistency");
+                        net_trace!("RPL DIO: hearing consistency");
                         self.rpl.dio_timer.hear_consistency();
 
                         return None;
@@ -406,7 +408,7 @@ impl InterfaceInner {
                 // If the rank is smaller than ours, the instance id and the mode of operation is
                 // the same as ours,, we can add the sender to our parent set.
                 let no_path_dao = if sender_rank < self.rpl.rank && !self.rpl.is_root {
-                    net_trace!("[RPL DIO] adding {} to parent set", ip_repr.src_addr);
+                    net_trace!("RPL DIO: adding {} to parent set", ip_repr.src_addr);
 
                     self.rpl_parent_set.add_parent(
                         Parent::new(
@@ -433,7 +435,7 @@ impl InterfaceInner {
                 // when we are the root, and the rank that is advertised in the DIO message is
                 // not infinite (so we received a valid DIO from a child).
                 if self.rpl.is_root && sender_rank != rank::Rank::INFINITE {
-                    net_trace!("[RPL DIO] hearing consistency");
+                    net_trace!("RPL DIO: hearing consistency");
                     self.rpl.dio_timer.hear_consistency();
                 }
 
@@ -461,7 +463,7 @@ impl InterfaceInner {
                 // Check validity of the DAO
                 // =========================
                 if self.rpl.instance_id != rpl_instance_id && self.rpl.dodag_id != dodag_id {
-                    net_trace!("[RPL DAO] dropping packet");
+                    net_trace!("RPL DAO: dropping packet");
                     return None;
                 }
 
@@ -469,7 +471,7 @@ impl InterfaceInner {
                     self.rpl.mode_of_operation,
                     ModeOfOperation::NoDownwardRoutesMaintained
                 ) {
-                    net_trace!("[RPL DAO] received DAO message, which is not supported in MOP0");
+                    net_trace!("RPL DAO: received DAO message, which is not supported in MOP0");
                     return None;
                 }
 
@@ -484,7 +486,7 @@ impl InterfaceInner {
                 if matches!(self.rpl.mode_of_operation, ModeOfOperation::NonStoringMode)
                     && !self.rpl.is_root
                 {
-                    net_trace!("[RPL DAO] forwarding DAO to root");
+                    net_trace!("RPL DAO: forwarding DAO to root");
                     let mut options = heapless::Vec::new();
                     options
                         .push(Ipv6OptionRepr::Rpl(RplHopByHopRepr {
@@ -545,7 +547,7 @@ impl InterfaceInner {
                                         Some(*parent_address)
                                     } else {
                                         net_debug!(
-                                            "[RPL DAO] Parent Address required for MOP1, dropping packet"
+                                            "RPL DAO: Parent Address required for MOP1, dropping packet"
                                         );
                                         return None;
                                     }
@@ -558,9 +560,9 @@ impl InterfaceInner {
                             };
                         }
                         RplOptionRepr::RplTargetDescriptor { .. } => {
-                            net_trace!("[RPL DAO] Target Descriptor Option not yet supported");
+                            net_trace!("RPL DAO: Target Descriptor Option not yet supported");
                         }
-                        _ => net_trace!("[RPL DAO] received invalid option"),
+                        _ => net_trace!("RPL DAO: received invalid option"),
                     }
                 }
 
@@ -575,7 +577,7 @@ impl InterfaceInner {
                     Some(parent),
                 ) = (child, lifetime, p_sequence, prefix_length, parent)
                 {
-                    net_trace!("[RPL DAO] Adding {} => {} relation", child, parent);
+                    net_trace!("RPL DAO: Adding {} => {} relation", child, parent);
 
                     //Create the relation with the child and parent addresses extracted from the options
                     self.relations.add_relation_checked(
@@ -604,7 +606,7 @@ impl InterfaceInner {
                         ModeOfOperation::StoringModeWithoutMulticast
                     ) && !self.rpl.is_root
                     {
-                        net_trace!("[RPL DAO] forwarding relation information to parent");
+                        net_trace!("RPL DAO: forwarding relation information to parent");
 
                         // Send message upward.
                         let mut options = heapless::Vec::new();
@@ -644,7 +646,7 @@ impl InterfaceInner {
                         ));
                     }
                 } else {
-                    net_trace!("[RPL DAO] not all required info received for adding relation");
+                    net_trace!("RPL DAO: not all required info received for adding relation");
                 }
 
                 None
@@ -672,10 +674,10 @@ impl InterfaceInner {
                                 && dao.sequence == Some(SequenceCounter::new(sequence)))
                         });
 
-                        net_trace!("[RPL DAO-ACK] DAO {} acknowledged", sequence);
+                        net_trace!("RPL DAO-ACK: DAO {} acknowledged", sequence);
                     } else {
                         // FIXME: the node should do something correct here.
-                        net_trace!("[RPL DAO-ACK] ACK status was {}", status);
+                        net_trace!("RPL DAO-ACK: ACK status was {}", status);
                     }
                 }
 
@@ -697,7 +699,7 @@ impl InterfaceInner {
         let sender_rank = Rank::new(hbh.sender_rank, self.rpl.minimum_hop_rank_increase);
 
         if hbh.rank_error {
-            net_trace!("[RPL HBH] contains rank error, resetting trickle timer, dropping packet");
+            net_trace!("RPL HBH: contains rank error, resetting trickle timer, dropping packet");
 
             self.rpl
                 .dio_timer
@@ -710,7 +712,7 @@ impl InterfaceInner {
         //  - If the packet is going up, and the sender rank is lower or equal as ours.
         if (hbh.down && self.rpl.rank <= sender_rank) || (!hbh.down && self.rpl.rank >= sender_rank)
         {
-            net_trace!("[RPL HBH] inconsistency detected, setting Rank-Error");
+            net_trace!("RPL HBH: inconsistency detected, setting Rank-Error");
             hbh.rank_error = true;
         }
 
@@ -754,13 +756,13 @@ impl InterfaceInner {
                 || preferred_parent.rank.dag_rank() < self.rpl.parent_rank.unwrap().dag_rank()
             {
                 net_trace!(
-                    "[RPL DIO] selecting {} as new parent",
+                    "RPL DIO: selecting {} as new parent",
                     preferred_parent.ip_addr
                 );
                 self.rpl.parent_last_heard = Some(self.now);
 
                 // Schedule a DAO after we send a no-path dao.
-                net_trace!("[RPL DIO] scheduling DAO");
+                net_trace!("RPL DIO: scheduling DAO");
                 self.rpl.dao_expiration = self.now;
 
                 // In case of MOP1, MOP2 and (maybe) MOP3, a DAO packet needs to be

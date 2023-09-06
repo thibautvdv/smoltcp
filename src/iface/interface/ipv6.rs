@@ -26,6 +26,8 @@ impl InterfaceInner {
             return None;
         }
 
+
+
         let ip_payload = ipv6_packet.payload();
 
         #[cfg(feature = "socket-raw")]

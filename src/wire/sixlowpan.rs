@@ -175,6 +175,8 @@ const DISPATCH_FRAGMENT_HEADER: u8 = 0b11100;
 const DISPATCH_IPHC_HEADER: u8 = 0b011;
 const DISPATCH_UDP_HEADER: u8 = 0b11110;
 const DISPATCH_EXT_HEADER: u8 = 0b1110;
+const DISPATCH_UDP_GHC_HEADER: u8 = 0b11010;
+const DISPATCH_ICMP_GHC_HEADER: u8 = 0b11011111;
 
 impl SixlowpanPacket {
     /// Returns the type of the 6LoWPAN header.
@@ -1462,14 +1464,17 @@ pub mod nhc {
     //! Implementation of Next Header Compression from [RFC 6282 § 4].
     //!
     //! [RFC 6282 § 4]: https://datatracker.ietf.org/doc/html/rfc6282#section-4
-    use super::{Error, NextHeader, Result, DISPATCH_EXT_HEADER, DISPATCH_UDP_HEADER};
+    use super::{
+        Error, NextHeader, Result, DISPATCH_EXT_HEADER, DISPATCH_ICMP_GHC_HEADER,
+        DISPATCH_UDP_GHC_HEADER, DISPATCH_UDP_HEADER,
+    };
     use crate::{
         phy::ChecksumCapabilities,
         wire::{
             ip::{checksum, Address as IpAddress},
             ipv6,
             udp::Repr as UdpRepr,
-            IpProtocol,
+            IpProtocol, Ipv6Address,
         },
     };
     use byteorder::{ByteOrder, NetworkEndian};
@@ -1517,6 +1522,8 @@ pub mod nhc {
     pub enum NhcPacket {
         ExtHeader,
         UdpHeader,
+        UdpGhcHeader,
+        IcmpGhcHeader,
     }
 
     impl NhcPacket {
@@ -1538,6 +1545,12 @@ pub mod nhc {
             } else if raw[0] >> 3 == DISPATCH_UDP_HEADER {
                 // We have a compressed UDP header.
                 Ok(Self::UdpHeader)
+            } else if raw[0] >> 3 == DISPATCH_UDP_GHC_HEADER {
+                // We have a UDP GHC packet
+                Ok(Self::UdpGhcHeader)
+            } else if raw[0] == DISPATCH_ICMP_GHC_HEADER {
+                // We have a ICMP GHC packet
+                Ok(Self::IcmpGhcHeader)
             } else {
                 Err(Error)
             }
@@ -2260,6 +2273,537 @@ pub mod nhc {
         }
     }
 
+    pub mod ghc {
+        use super::*;
+        use crate::wire::Ipv6Address;
+
+        const COPY: u8 = 0x00;
+        const ZERO: u8 = 0x80;
+        const SET_BACKREF: u8 = 0xA0;
+        const BACKREF: u8 = 0xC0;
+        const DICO_SIZE: usize = 48;
+        const MAX_ZERO_SEQUENCE: usize = 17;
+
+        /// Initialize the compression/decompression dictionary.
+        pub fn dict_init(comp_buf: &mut [u8], src: &Ipv6Address, dst: &Ipv6Address) {
+            assert!(comp_buf.len() >= 48);
+
+            const STATIC_DICT: [u8; 16] = [
+                0x16, 0xfe, 0xfd, 0x17, 0xfe, 0xfd, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+                0x00, 0x00,
+            ];
+
+            comp_buf[..16].copy_from_slice(&src.as_bytes()[..16]);
+            comp_buf[16..32].copy_from_slice(&dst.as_bytes()[..16]);
+            comp_buf[32..48].copy_from_slice(&STATIC_DICT[..16]);
+        }
+
+        pub fn decompress<'a>(
+            payload: &[u8],
+            src: &Ipv6Address,
+            dst: &Ipv6Address,
+            decompressed: &'a mut alloc::vec::Vec<u8>,
+        ) -> &'a [u8] {
+            dict_init(decompressed, src, dst);
+
+            let mut decomp_buf_index: usize = DICO_SIZE;
+
+            let mut na = 0x00;
+            let mut sa = 0x00;
+
+            let len = payload.len();
+
+            let mut i = 0;
+
+            while i < len {
+                if (payload[i] & 0x80) == COPY {
+                    /* Codebyte : 0kkkkkkk
+                    Action   : Append k = 0b0kkkkkkk bytes of data in the
+                               bytecode argument (k < 96) */
+                    for j in 0..payload[i] {
+                        decompressed.push(payload[i + 1 + (j as usize)]);
+                    }
+                    decomp_buf_index += payload[i] as usize;
+                    i += payload[i] as usize;
+                } else if (payload[i] & 0xF0) == ZERO {
+                    /* Codebyte : 1000nnnn
+                    Action   : Append 0b0000nnnn+2 bytes of zeroes */
+                    for _ in 0..((payload[i] & 0x0F) + 2) {
+                        decompressed.push(0x00);
+                    }
+                    decomp_buf_index += ((payload[i] & 0x0F) + 2) as usize;
+                } else if (payload[i] & 0xE0) == SET_BACKREF {
+                    /* Codebyte : 101nssss
+                    Action   : Set up extended arguments for a
+                               backreference: sa += 0b0ssss000,
+                               na += 0b0000n000 */
+                    na += (payload[i] & 0x10) >> 1;
+                    sa += (payload[i] & 0x0F) << 3;
+                } else if (payload[i] & 0xC0) == BACKREF {
+                    /* Codebyte : 11nnnkkk
+                    Action   : Backreference: n = na+0b00000nnn+2;
+                               s = 0b00000kkk+sa+n; append n bytes from
+                               previously output bytes, starting s bytes
+                               to the left of the current output pointer;
+                               set sa = 0, na = 0 */
+                    let n = na + ((payload[i] & 0x38) >> 3) + 2;
+                    let s = (payload[i] & 0x07) + sa + n;
+                    for j in 0..n {
+                        decompressed.push(decompressed[decomp_buf_index - s as usize + j as usize]);
+                    }
+                    decomp_buf_index += n as usize;
+                    na = 0x00;
+                    sa = 0x00
+                }
+                i += 1;
+                continue;
+            }
+
+            &decompressed[DICO_SIZE..]
+        }
+
+        pub fn compress<'a>(
+            payload: &[u8],
+            src: &Ipv6Address,
+            dst: &Ipv6Address,
+            compressed: &'a mut alloc::vec::Vec<u8>,
+        ) -> &'a [u8] {
+            let len = payload.len();
+            /* Initialize buffer with static dico followed by the payload */
+            let mut buffer = alloc::vec![0u8; DICO_SIZE + len];
+            dict_init(&mut buffer, src, dst);
+            buffer[DICO_SIZE..].copy_from_slice(payload);
+
+            let mut buffer_index = 0;
+            let mut copy_buffer = 0;
+            let mut payload_index = 0;
+
+            let mut i = 0;
+            while i < len {
+                /* Count zero sequence */
+                let mut zero_sequence = 0;
+                for (z, item) in payload.iter().enumerate().skip(i).take(MAX_ZERO_SEQUENCE) {
+                    if z < len && *item == 0x00 {
+                        zero_sequence += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                /* Initialize variables for matches in dico */
+                let mut index = 0;
+                let mut index_best = 0;
+                let mut append = 0;
+                let mut append_best = 0;
+
+                let mut dictionary_index = 0;
+                /* Browse the dictionary and the buffer to find matches */
+                while dictionary_index < i + DICO_SIZE {
+                    /* Found a first match */
+                    if (payload_index < len)
+                        && (append == 0)
+                        && (i + DICO_SIZE - dictionary_index > 1)
+                        && (payload[payload_index] == buffer[dictionary_index])
+                    {
+                        /* Condition to avoid overflow */
+                        if payload_index + 1 < len {
+                            /* Found a matching pair */
+                            if payload[payload_index + 1] == buffer[dictionary_index + 1] {
+                                index = dictionary_index;
+                                append = 2;
+
+                                if append >= append_best {
+                                    append_best = append;
+                                    index_best = index;
+                                }
+
+                                payload_index += 2;
+                                dictionary_index += 2;
+
+                                continue;
+                            }
+                        }
+                    }
+                    /* Found another match following previous matching pair */
+                    else if (payload_index < len)
+                        && (append > 0)
+                        && (payload[payload_index] == buffer[dictionary_index])
+                    {
+                        append += 1;
+
+                        if append >= append_best {
+                            append_best = append;
+                            index_best = index;
+                        }
+
+                        payload_index += 1;
+                        dictionary_index += 1;
+
+                        continue;
+                    }
+                    /* No more following match found, set best match sequence */
+                    else if (payload_index < len)
+                        && (append > 0)
+                        && (payload[payload_index] != buffer[dictionary_index])
+                    {
+                        if append >= append_best {
+                            append_best = append;
+                            index_best = index;
+                        }
+                        payload_index = i;
+                        dictionary_index -= append - 1;
+                        append = 0;
+                        index = 0;
+
+                        continue;
+                    }
+                    /* No match */
+                    dictionary_index += 1;
+                }
+                /* Set payload index */
+                payload_index = i;
+                /* Matches found */
+                /* Zero seq in dico
+                 * Max offset for backref is 9
+                 * No condition */
+                if (append_best > zero_sequence)
+                    && ((append_best < 3 && (i + DICO_SIZE - index_best) < 10)
+                        || (append_best > 2)
+                            && (i + DICO_SIZE - index_best - append_best + 2 < 120)
+                            && (((i + DICO_SIZE - index_best - append_best + 2) % 120) >= 2)
+                            && (append_best - 2 < 127))
+                {
+                    /* Reset copy_buffer */
+                    if copy_buffer > 0 {
+                        copy_buffer = 0;
+                    }
+                    /* Initialize for backref */
+                    let mut backref: u8 = 0xc0;
+                    /* Initialize n and s for backref */
+                    let n = append_best - 2;
+                    let s = i + DICO_SIZE - index_best - n;
+
+                    /* Set up for extended backreference */
+                    if n > 7 || s > 9 {
+                        let mut extended_n = n / 8;
+                        let backref_n = n % 8;
+                        let mut extended_s = s / 120;
+                        let backref_s = s % 120;
+
+                        /* Set variable for extended_s and extended_n */
+                        while extended_s > 0 {
+                            let mut extend_backref = 0xa0;
+                            if extended_n > 0 {
+                                extend_backref += 0x10;
+                                extended_n -= 1;
+                            }
+                            extend_backref += 0xf;
+                            extended_s -= 1;
+                            if buffer_index >= compressed.len() {
+                                compressed.push(extend_backref);
+                            } else {
+                                compressed[buffer_index] = extend_backref;
+                            }
+                            buffer_index += 1;
+                        }
+                        /* No offset extended_s but backref_s  */
+                        let mut extend_backref = 0xa0;
+                        if extended_n > 0 {
+                            extend_backref += 0x10;
+                            extended_n -= 1;
+                        }
+                        extend_backref += (((backref_s - 2) & 0x78) >> 3) as u8;
+                        if buffer_index >= compressed.len() {
+                            compressed.push(extend_backref);
+                        } else {
+                            compressed[buffer_index] = extend_backref;
+                        }
+                        buffer_index += 1;
+                        /* No or no more offset extended_s but extended_n */
+                        while extended_n > 0 {
+                            let extend_backref = 0xb0;
+                            if buffer_index >= compressed.len() {
+                                compressed.push(extend_backref);
+                            } else {
+                                compressed[buffer_index] = extend_backref;
+                            }
+                            extended_n -= 1;
+                            buffer_index += 1;
+                        }
+                        /* Set up backreference for the extended arguments */
+                        backref += ((backref_n << 3) + ((backref_s - 2) & 0x07)) as u8;
+
+                        if buffer_index >= compressed.len() {
+                            compressed.push(backref);
+                        } else {
+                            compressed[buffer_index] = backref;
+                        }
+                        buffer_index += 1;
+                    }
+                    /* Set up backreference */
+                    else {
+                        backref += ((n << 3) + s - 2) as u8;
+                        if buffer_index >= compressed.len() {
+                            compressed.push(backref);
+                        } else {
+                            compressed[buffer_index] = backref;
+                        }
+                        buffer_index += 1;
+                    }
+
+                    payload_index += append_best;
+                    i += append_best - 1;
+                } else if zero_sequence > 1 {
+                    /* Zero sequence */
+                    if buffer_index >= compressed.len() {
+                        compressed.push((0x80 + zero_sequence - 2) as u8);
+                    } else {
+                        compressed[buffer_index] = (0x80 + zero_sequence - 2) as u8;
+                    }
+                    buffer_index += 1;
+
+                    payload_index += zero_sequence;
+
+                    copy_buffer = 0;
+                    i += zero_sequence - 1;
+                } else {
+                    /* No match found in the dico and no zero seq found */
+                    if copy_buffer == 0 {
+                        if buffer_index >= compressed.len() {
+                            compressed.push((copy_buffer + 1) as u8);
+                        } else {
+                            compressed[buffer_index] = (copy_buffer + 1) as u8;
+                        }
+                        buffer_index += 1;
+                        if buffer_index >= compressed.len() {
+                            compressed.push(payload[payload_index]);
+                        } else {
+                            compressed[buffer_index] = payload[payload_index];
+                        }
+                        copy_buffer += 1;
+                        buffer_index += 1;
+                        payload_index += 1;
+                    } else {
+                        compressed[buffer_index - copy_buffer - 1] = (copy_buffer + 1) as u8;
+                        if buffer_index >= compressed.len() {
+                            compressed.push(payload[payload_index]);
+                        } else {
+                            compressed[buffer_index] = payload[payload_index];
+                        }
+
+                        copy_buffer += 1;
+                        buffer_index += 1;
+                        payload_index += 1;
+                        if copy_buffer > 95 {
+                            copy_buffer = 0;
+                        }
+                    }
+                }
+                i += 1;
+            }
+            &compressed[..buffer_index]
+        }
+    }
+
+    /// A read/write wrapper around a 6LoWPAN_GHC UDP frame.
+    /// [RFC 7400 § 3.1] specifies the format of the header.
+    ///
+    /// The base header has the following formath:
+    /// ```txt
+    ///   0   1   2   3   4   5   6   7
+    /// +---+---+---+---+---+---+---+---+
+    /// | 1 | 1 | 0 | 1 | 0 | C |   P   |
+    /// +---+---+---+---+---+---+---+---+
+    /// With:
+    /// - C: checksum, specifies if the checksum is elided.
+    /// - P: ports, specifies if the ports are elided.
+    /// ```
+    ///
+    /// [RFC 7400 § 3.1]: https://datatracker.ietf.org/doc/html/rfc7400#section-3.1
+    #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct UdpGhcPacket<T: AsRef<[u8]>> {
+        udp_nhc: UdpNhcPacket<T>,
+    }
+
+    impl<T: AsRef<[u8]>> UdpGhcPacket<T> {
+        /// Input a raw octet buffer with a LOWPAN_GHC frame structure for UDP.
+        pub const fn new_unchecked(buffer: T) -> Self {
+            Self {
+                udp_nhc: UdpNhcPacket::new_unchecked(buffer),
+            }
+        }
+
+        /// Shorthand for a combination of [new_unchecked] and [check_len].
+        ///
+        /// [new_unchecked]: #method.new_unchecked
+        /// [check_len]: #method.check_len
+        pub fn new_checked(buffer: T) -> Result<Self> {
+            let packet = Self::new_unchecked(buffer);
+            packet.check_len()?;
+            Ok(packet)
+        }
+
+        /// Ensure that no accessor method will panic if called.
+        /// Returns `Err(Error::Truncated)` if the buffer is too short.
+        pub fn check_len(&self) -> Result<()> {
+            let buffer = self.udp_nhc.buffer.as_ref();
+
+            if buffer.is_empty() {
+                return Err(Error);
+            }
+
+            let index = 1 + self.ports_size() + self.checksum_size();
+            if index > buffer.len() {
+                return Err(Error);
+            }
+
+            Ok(())
+        }
+
+        /// Consumes the frame, returning the underlying buffer.
+        pub fn into_inner(self) -> T {
+            self.udp_nhc.buffer
+        }
+    }
+
+    impl<T: AsRef<[u8]> + AsMut<[u8]>> UdpGhcPacket<T> {
+        pub fn set_dispatch_field(&mut self) {
+            let data = self.buffer.as_mut();
+            data[0] = (data[0] & !(0b11111 << 3)) | (DISPATCH_UDP_GHC_HEADER << 3);
+        }
+    }
+
+    impl<T: AsRef<[u8]>> core::ops::Deref for UdpGhcPacket<T> {
+        type Target = UdpNhcPacket<T>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.udp_nhc
+        }
+    }
+
+    impl<T: AsRef<[u8]> + AsMut<[u8]>> core::ops::DerefMut for UdpGhcPacket<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.udp_nhc
+        }
+    }
+
+    /// A high-level representation of a 6LoWPAN GHC UDP header.
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct UdpGhcRepr(pub UdpRepr);
+
+    impl<'a> UdpGhcRepr {
+        /// Parse a 6LoWPAN GHC UDP packet and return a high-level representation.
+        pub fn parse<T: AsRef<[u8]> + ?Sized>(
+            packet: &UdpGhcPacket<&'a T>,
+            src_addr: &ipv6::Address,
+            dst_addr: &ipv6::Address,
+            checksum_caps: &ChecksumCapabilities,
+        ) -> Result<Self> {
+            packet.check_len()?;
+
+            if packet.dispatch_field() != DISPATCH_UDP_GHC_HEADER {
+                return Err(Error);
+            }
+
+            if checksum_caps.udp.rx() {
+                let payload_len = packet.payload().len();
+                let chk_sum = !checksum::combine(&[
+                    checksum::pseudo_header(
+                        &IpAddress::Ipv6(*src_addr),
+                        &IpAddress::Ipv6(*dst_addr),
+                        crate::wire::ip::Protocol::Udp,
+                        payload_len as u32 + 8,
+                    ),
+                    packet.src_port(),
+                    packet.dst_port(),
+                    payload_len as u16 + 8,
+                    checksum::data(packet.payload()),
+                ]);
+
+                if let Some(checksum) = packet.checksum() {
+                    if chk_sum != checksum {
+                        return Err(Error);
+                    }
+                }
+            }
+
+            Ok(Self(UdpRepr {
+                src_port: packet.src_port(),
+                dst_port: packet.dst_port(),
+            }))
+        }
+
+        /// Return the length of a packet that will be emitted from this high-level representation.
+        pub fn header_len(&self) -> usize {
+            let mut len = 1; // The minimal header size
+
+            len += 2; // XXX We assume we will add the checksum at the end
+
+            // Check if we can compress the source and destination ports
+            match (self.src_port, self.dst_port) {
+                (0xf0b0..=0xf0bf, 0xf0b0..=0xf0bf) => len + 1,
+                (0xf000..=0xf0ff, _) | (_, 0xf000..=0xf0ff) => len + 3,
+                (_, _) => len + 4,
+            }
+        }
+
+        pub fn compressed_payload_len(
+            &self,
+            payload: &[u8],
+            src_addr: &Ipv6Address,
+            dst_addr: &Ipv6Address,
+        ) -> usize {
+            let mut compressed = alloc::vec![0u8; 48];
+            let compressed = ghc::compress(payload, src_addr, dst_addr, &mut compressed);
+            compressed.len()
+        }
+
+        /// Emit a high-level representation into a LOWPAN_GHC UDP header.
+        pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(
+            &self,
+            packet: &mut UdpGhcPacket<T>,
+            src_addr: &Address,
+            dst_addr: &Address,
+            payload_len: usize,
+            emit_payload: impl FnOnce(&mut [u8]),
+        ) {
+            packet.set_dispatch_field();
+            packet.set_ports(self.src_port, self.dst_port);
+            emit_payload(packet.payload_mut());
+
+            let chk_sum = !checksum::combine(&[
+                checksum::pseudo_header(
+                    &IpAddress::Ipv6(*src_addr),
+                    &IpAddress::Ipv6(*dst_addr),
+                    crate::wire::ip::Protocol::Udp,
+                    payload_len as u32 + 8,
+                ),
+                self.src_port,
+                self.dst_port,
+                payload_len as u16 + 8,
+                checksum::data(packet.payload_mut()),
+            ]);
+
+            packet.set_checksum(chk_sum);
+        }
+    }
+
+    impl core::ops::Deref for UdpGhcRepr {
+        type Target = UdpRepr;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl core::ops::DerefMut for UdpGhcRepr {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+
     #[cfg(test)]
     mod test {
         use super::*;
@@ -2333,6 +2877,55 @@ pub mod nhc {
             assert_eq!(packet.src_port(), 0xf0b1);
             assert_eq!(packet.dst_port(), 0xf001);
             assert_eq!(packet.payload_mut(), b"Hello World!");
+        }
+
+        #[test]
+        fn udp_ghc_fields() {
+            let bytes = [0xd0, 0x16, 0x2e, 0x22, 0x3d, 0x28, 0xc4];
+
+            let packet = UdpGhcPacket::new_checked(&bytes[..]).unwrap();
+            assert_eq!(packet.dispatch_field(), DISPATCH_UDP_GHC_HEADER);
+            assert_eq!(packet.checksum(), Some(0x28c4));
+            assert_eq!(packet.src_port(), 5678);
+            assert_eq!(packet.dst_port(), 8765);
+        }
+
+        #[test]
+        fn udp_ghc_emit() {
+            let udp = UdpGhcRepr(UdpRepr {
+                src_port: 0xf0b1,
+                dst_port: 0xf001,
+            });
+
+            let payload = b"Hello World!";
+
+            let src_addr = ipv6::Address::default();
+            let dst_addr = ipv6::Address::default();
+
+            let len = udp.header_len() + udp.compressed_payload_len(payload, &src_addr, &dst_addr);
+            let mut buffer = [0u8; 127];
+            let mut packet = UdpGhcPacket::new_unchecked(&mut buffer[..len]);
+
+            let mut compressed = vec![0u8; 48];
+            udp.emit(
+                &mut packet,
+                &src_addr,
+                &dst_addr,
+                udp.compressed_payload_len(payload, &src_addr, &dst_addr),
+                |buf| {
+                    buf.copy_from_slice(
+                        &ghc::compress(payload, &src_addr, &dst_addr, &mut compressed)[..],
+                    )
+                },
+            );
+
+            assert_eq!(packet.dispatch_field(), DISPATCH_UDP_GHC_HEADER);
+            assert_eq!(packet.src_port(), 0xf0b1);
+            assert_eq!(packet.dst_port(), 0xf001);
+            assert_eq!(
+                packet.payload_mut(),
+                ghc::compress(payload, &src_addr, &dst_addr, &mut compressed,)
+            );
         }
     }
 }
