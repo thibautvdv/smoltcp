@@ -628,7 +628,7 @@ impl Interface {
             },
             fragmenter: Fragmenter::new(),
             inner: InterfaceInner {
-                use_sixlowpan_ghc: false,
+                use_sixlowpan_ghc: true,
                 now: Instant::from_secs(0),
                 caps,
                 hardware_addr: config.hardware_addr,
@@ -855,8 +855,9 @@ impl Interface {
         }
 
         #[cfg(feature = "proto-rpl")]
-        self.poll_rpl(device);
+        let mut readiness_may_have_changed = self.poll_rpl(device);
 
+        #[cfg(not(feature = "proto-rpl"))]
         let mut readiness_may_have_changed = false;
 
         loop {
@@ -986,9 +987,11 @@ impl Interface {
 
     #[cfg(feature = "proto-rpl")]
     pub fn poll_at_rpl(&mut self) -> Instant {
-        let InterfaceInner { rpl, .. } = &mut self.inner;
+        let InterfaceInner { rpl, now, .. } = &mut self.inner;
 
-        if rpl.has_parent() || rpl.is_root {
+        if rpl.daos.iter().any(|dao| dao.needs_sending) || !rpl.dao_ack.is_empty() {
+            *now
+        } else if rpl.has_parent() || rpl.is_root {
             rpl.dio_timer.poll_at()
         } else {
             rpl.dis_expiration
@@ -1280,6 +1283,8 @@ impl Interface {
                     return false;
                 }
             }
+        } else {
+            net_trace!("ERROR: failed to transmit DIO");
         }
 
         false

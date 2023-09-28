@@ -254,7 +254,7 @@ impl RplInstance {
             }
         }
 
-        !self.daos.is_empty()
+        self.daos.iter().any(|dao| dao.needs_sending)
     }
 
     pub fn should_send_dis(&self, now: Instant) -> bool {

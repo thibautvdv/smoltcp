@@ -795,6 +795,7 @@ impl InterfaceInner {
         // Reset the trickle timer.
         let min = self.rpl.dio_timer.min_expiration();
         self.rpl.dio_timer.reset(min, self.now, &mut self.rand);
+        net_trace!("RPL DIO: resetting trickle timer");
 
         no_path
     }
