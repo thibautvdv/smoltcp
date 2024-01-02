@@ -123,8 +123,13 @@ impl Interface {
     }
 
     /// Check whether the interface listens to given destination multicast IP address.
-    pub fn has_multicast_group<T: Into<IpAddress>>(&self, addr: T) -> bool {
-        self.inner.has_multicast_group(addr)
+    pub fn has_multicast_group(&self, addr: &IpAddress) -> bool {
+        match addr {
+            #[cfg(feature = "proto-ipv4")]
+            IpAddress::Ipv4(addr) => self.inner.has_multicast_group_v4(addr),
+            #[cfg(feature = "proto-ipv6")]
+            IpAddress::Ipv6(addr) => self.inner.has_multicast_group_v6(addr),
+        }
     }
 
     /// Depending on `igmp_report_state` and the therein contained
@@ -253,7 +258,8 @@ impl InterfaceInner {
                     }
                 } else {
                     // Group-specific query
-                    if self.has_multicast_group(group_addr) && ipv4_repr.dst_addr == group_addr {
+                    if self.has_multicast_group_v4(&group_addr) && ipv4_repr.dst_addr == group_addr
+                    {
                         // Don't respond immediately
                         let timeout = max_resp_time / 4;
                         self.igmp_report_state = IgmpReportState::ToSpecificQuery {

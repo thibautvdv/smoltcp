@@ -176,14 +176,14 @@ impl<'a, T: AsRef<[u8]> + ?Sized> Frame<&'a T> {
 impl<T: AsRef<[u8]> + AsMut<[u8]>> Frame<T> {
     /// Set the destination address field.
     #[inline]
-    pub fn set_dst_addr(&mut self, value: Address) {
+    pub fn set_dst_addr(&mut self, value: &Address) {
         let data = self.buffer.as_mut();
         data[field::DESTINATION].copy_from_slice(value.as_bytes())
     }
 
     /// Set the source address field.
     #[inline]
-    pub fn set_src_addr(&mut self, value: Address) {
+    pub fn set_src_addr(&mut self, value: &Address) {
         let data = self.buffer.as_mut();
         data[field::SOURCE].copy_from_slice(value.as_bytes())
     }
@@ -283,8 +283,8 @@ impl Repr {
 
     /// Emit a high-level representation into an Ethernet II frame.
     pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(&self, frame: &mut Frame<T>) {
-        frame.set_src_addr(self.src_addr);
-        frame.set_dst_addr(self.dst_addr);
+        frame.set_src_addr(&self.src_addr);
+        frame.set_dst_addr(&self.dst_addr);
         frame.set_ethertype(self.ethertype);
     }
 }
@@ -344,8 +344,8 @@ mod test_ipv4 {
     fn test_construct() {
         let mut bytes = vec![0xa5; 64];
         let mut frame = Frame::new_unchecked(&mut bytes);
-        frame.set_dst_addr(Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
-        frame.set_src_addr(Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
+        frame.set_dst_addr(&Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
+        frame.set_src_addr(&Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         frame.set_ethertype(EtherType::Ipv4);
         frame.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
         assert_eq!(&frame.into_inner()[..], &FRAME_BYTES[..]);
@@ -390,8 +390,8 @@ mod test_ipv6 {
     fn test_construct() {
         let mut bytes = vec![0xa5; 54];
         let mut frame = Frame::new_unchecked(&mut bytes);
-        frame.set_dst_addr(Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
-        frame.set_src_addr(Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
+        frame.set_dst_addr(&Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
+        frame.set_src_addr(&Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         frame.set_ethertype(EtherType::Ipv6);
         assert_eq!(PAYLOAD_BYTES.len(), frame.payload_mut().len());
         frame.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);

@@ -341,8 +341,13 @@ impl Interface {
     }
 
     /// Check whether the interface has the given IP address assigned.
-    pub fn has_ip_addr<T: Into<IpAddress>>(&self, addr: T) -> bool {
-        self.inner.has_ip_addr(addr)
+    pub fn has_ip_addr(&self, addr: &IpAddress) -> bool {
+        match addr {
+            #[cfg(feature = "proto-ipv4")]
+            IpAddress::Ipv4(addr) => self.inner.has_ipv4_addr(addr),
+            #[cfg(feature = "proto-ipv6")]
+            IpAddress::Ipv6(addr) => self.inner.has_ipv6_addr(addr),
+        }
     }
 
     pub fn routes(&self) -> &Routes {
@@ -968,7 +973,7 @@ impl InterfaceInner {
     ///
     /// [RFC 4291 § 2.7.1]: https://tools.ietf.org/html/rfc4291#section-2.7.1
     #[cfg(feature = "proto-ipv6")]
-    pub fn has_solicited_node(&self, addr: Ipv6Address) -> bool {
+    pub fn has_solicited_node(&self, addr: &Ipv6Address) -> bool {
         self.ip_addrs.iter().any(|cidr| {
             match *cidr {
                 IpCidr::Ipv6(cidr) if cidr.address() != Ipv6Address::LOOPBACK => {
@@ -981,10 +986,24 @@ impl InterfaceInner {
         })
     }
 
-    /// Check whether the interface has the given IP address assigned.
-    fn has_ip_addr<T: Into<IpAddress>>(&self, addr: T) -> bool {
-        let addr = addr.into();
-        self.ip_addrs.iter().any(|probe| probe.address() == addr)
+    /// Check whether the interface has the given IPv4 address assigned.
+    #[cfg(feature = "proto-ipv4")]
+    fn has_ipv4_addr(&self, addr: &Ipv4Address) -> bool {
+        self.ip_addrs.iter().any(|a| match a.address() {
+            IpAddress::Ipv4(a) => &a == addr,
+            #[allow(unreachable_patterns)]
+            _ => false,
+        })
+    }
+
+    /// Check whether the interface has the given IPv6 address assigned.
+    #[cfg(feature = "proto-ipv6")]
+    fn has_ipv6_addr(&self, addr: &Ipv6Address) -> bool {
+        self.ip_addrs.iter().any(|a| match a.address() {
+            IpAddress::Ipv6(a) => &a == addr,
+            #[allow(unreachable_patterns)]
+            _ => false,
+        })
     }
 
     /// Get the first IPv4 address of the interface.
@@ -1007,25 +1026,29 @@ impl InterfaceInner {
         })
     }
 
-    /// Check whether the interface listens to given destination multicast IP address.
+    /// Check whether the interface listens to given destination multicast IPv4 address.
     ///
-    /// If built without feature `proto-igmp` this function will
-    /// always return `false` when using IPv4.
-    fn has_multicast_group<T: Into<IpAddress>>(&self, addr: T) -> bool {
-        match addr.into() {
-            #[cfg(feature = "proto-igmp")]
-            IpAddress::Ipv4(key) => {
-                key == Ipv4Address::MULTICAST_ALL_SYSTEMS
-                    || self.ipv4_multicast_groups.get(&key).is_some()
-            }
-            #[cfg(feature = "proto-ipv6")]
-            IpAddress::Ipv6(Ipv6Address::LINK_LOCAL_ALL_NODES) => true,
-            #[cfg(feature = "proto-rpl")]
-            IpAddress::Ipv6(Ipv6Address::LINK_LOCAL_ALL_RPL_NODES) => true,
-            #[cfg(feature = "proto-ipv6")]
-            IpAddress::Ipv6(addr) => self.has_solicited_node(addr),
-            #[allow(unreachable_patterns)]
-            _ => false,
+    /// This will only return `true` if the interface has IGMP enabled.
+    #[cfg(feature = "proto-ipv4")]
+    fn has_multicast_group_v4(&self, addr: &Ipv4Address) -> bool {
+        #[cfg(feature = "proto-igmp")]
+        {
+            addr == &Ipv4Address::MULTICAST_ALL_SYSTEMS
+                || self.ipv4_multicast_groups.get(addr).is_some()
+        }
+        #[cfg(not(feature = "proto-igmp"))]
+        {
+            false
+        }
+    }
+
+    /// Check whether the interface listens to given destination multicast IPv6 address.
+    #[cfg(feature = "proto-ipv6")]
+    fn has_multicast_group_v6(&self, addr: &Ipv6Address) -> bool {
+        match addr {
+            &Ipv6Address::LINK_LOCAL_ALL_NODES => true,
+            &Ipv6Address::LINK_LOCAL_ALL_RPL_NODES => true,
+            addr => self.has_solicited_node(addr),
         }
     }
 
@@ -1081,7 +1104,7 @@ impl InterfaceInner {
     pub(crate) fn is_broadcast(&self, address: &IpAddress) -> bool {
         match address {
             #[cfg(feature = "proto-ipv4")]
-            IpAddress::Ipv4(address) => self.is_broadcast_v4(*address),
+            IpAddress::Ipv4(address) => self.is_broadcast_v4(address),
             #[cfg(feature = "proto-ipv6")]
             IpAddress::Ipv6(_) => false,
         }
@@ -1090,7 +1113,7 @@ impl InterfaceInner {
     /// Checks if an address is broadcast, taking into account ipv4 subnet-local
     /// broadcast addresses.
     #[cfg(feature = "proto-ipv4")]
-    pub(crate) fn is_broadcast_v4(&self, address: Ipv4Address) -> bool {
+    pub(crate) fn is_broadcast_v4(&self, address: &Ipv4Address) -> bool {
         if address.is_broadcast() {
             return true;
         }
@@ -1102,12 +1125,12 @@ impl InterfaceInner {
                 #[cfg(feature = "proto-ipv6")]
                 IpCidr::Ipv6(_) => None,
             })
-            .any(|broadcast_address| address == broadcast_address)
+            .any(|broadcast_address| address == &broadcast_address)
     }
 
     /// Checks if an ipv4 address is unicast, taking into account subnet broadcast addresses
     #[cfg(feature = "proto-ipv4")]
-    fn is_unicast_v4(&self, address: Ipv4Address) -> bool {
+    fn is_unicast_v4(&self, address: &Ipv4Address) -> bool {
         address.is_unicast() && !self.is_broadcast_v4(address)
     }
 
@@ -1238,7 +1261,7 @@ impl InterfaceInner {
                 };
 
                 self.dispatch_ethernet(tx_token, arp_repr.buffer_len(), |mut frame| {
-                    frame.set_dst_addr(dst_hardware_addr);
+                    frame.set_dst_addr(&dst_hardware_addr);
                     frame.set_ethertype(EthernetProtocol::Arp);
 
                     let mut packet = ArpPacket::new_unchecked(frame.payload_mut());
@@ -1374,7 +1397,7 @@ impl InterfaceInner {
 
                 if let Err(e) =
                     self.dispatch_ethernet(tx_token, arp_repr.buffer_len(), |mut frame| {
-                        frame.set_dst_addr(EthernetAddress::BROADCAST);
+                        frame.set_dst_addr(&EthernetAddress::BROADCAST);
                         frame.set_ethertype(EthernetProtocol::Arp);
 
                         arp_repr.emit(&mut ArpPacket::new_unchecked(frame.payload_mut()))
@@ -1497,8 +1520,8 @@ impl InterfaceInner {
             let mut frame = EthernetFrame::new_unchecked(tx_buffer);
 
             let src_addr = self.hardware_addr.ethernet_or_panic();
-            frame.set_src_addr(src_addr);
-            frame.set_dst_addr(dst_hardware_addr);
+            frame.set_src_addr(&src_addr);
+            frame.set_dst_addr(&dst_hardware_addr);
 
             match repr.version() {
                 #[cfg(feature = "proto-ipv4")]

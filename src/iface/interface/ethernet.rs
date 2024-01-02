@@ -66,7 +66,7 @@ impl InterfaceInner {
             let mut frame = EthernetFrame::new_unchecked(tx_buffer);
 
             let src_addr = self.hardware_addr.ethernet_or_panic();
-            frame.set_src_addr(src_addr);
+            frame.set_src_addr(&src_addr);
 
             f(frame);
 

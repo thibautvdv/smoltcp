@@ -49,8 +49,8 @@ impl InterfaceInner {
             (ipv6_repr.next_header, ipv6_packet.payload())
         };
 
-        if !self.has_ip_addr(ipv6_repr.dst_addr)
-            && !self.has_multicast_group(ipv6_repr.dst_addr)
+        if !self.has_ipv6_addr(&ipv6_repr.dst_addr)
+            && !self.has_multicast_group_v6(&ipv6_repr.dst_addr)
             && !ipv6_repr.dst_addr.is_loopback()
         {
             net_trace!("packet IP address not for this interface");
@@ -300,7 +300,7 @@ impl InterfaceInner {
                         .fill(ip_repr.src_addr.into(), lladdr, self.now);
                 }
 
-                if self.has_solicited_node(ip_repr.dst_addr) && self.has_ip_addr(target_addr) {
+                if self.has_solicited_node(&ip_repr.dst_addr) && self.has_ipv6_addr(&target_addr) {
                     let advert = Icmpv6Repr::Ndisc(NdiscRepr::NeighborAdvert {
                         flags: NdiscNeighborFlags::SOLICITED,
                         target_addr,

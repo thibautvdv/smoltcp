@@ -157,7 +157,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
 impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the target address field.
     #[inline]
-    pub fn set_target_addr(&mut self, value: Ipv6Address) {
+    pub fn set_target_addr(&mut self, value: &Ipv6Address) {
         let data = self.buffer.as_mut();
         data[field::TARGET_ADDR].copy_from_slice(value.as_bytes());
     }
@@ -182,7 +182,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
 impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the destination address field.
     #[inline]
-    pub fn set_dest_addr(&mut self, value: Ipv6Address) {
+    pub fn set_dest_addr(&mut self, value: &Ipv6Address) {
         let data = self.buffer.as_mut();
         data[field::DEST_ADDR].copy_from_slice(value.as_bytes());
     }
@@ -400,7 +400,7 @@ impl<'a> Repr<'a> {
                 packet.set_msg_type(Message::NeighborSolicit);
                 packet.set_msg_code(0);
                 packet.clear_reserved();
-                packet.set_target_addr(target_addr);
+                packet.set_target_addr(&target_addr);
                 if let Some(lladdr) = lladdr {
                     let mut opt_pkt = NdiscOption::new_unchecked(packet.payload_mut());
                     NdiscOptionRepr::SourceLinkLayerAddr(lladdr).emit(&mut opt_pkt);
@@ -416,7 +416,7 @@ impl<'a> Repr<'a> {
                 packet.set_msg_code(0);
                 packet.clear_reserved();
                 packet.set_neighbor_flags(flags);
-                packet.set_target_addr(target_addr);
+                packet.set_target_addr(&target_addr);
                 if let Some(lladdr) = lladdr {
                     let mut opt_pkt = NdiscOption::new_unchecked(packet.payload_mut());
                     NdiscOptionRepr::TargetLinkLayerAddr(lladdr).emit(&mut opt_pkt);
@@ -432,8 +432,8 @@ impl<'a> Repr<'a> {
                 packet.set_msg_type(Message::Redirect);
                 packet.set_msg_code(0);
                 packet.clear_reserved();
-                packet.set_target_addr(target_addr);
-                packet.set_dest_addr(dest_addr);
+                packet.set_target_addr(&target_addr);
+                packet.set_dest_addr(&dest_addr);
                 let offset = match lladdr {
                     Some(lladdr) => {
                         let mut opt_pkt = NdiscOption::new_unchecked(packet.payload_mut());

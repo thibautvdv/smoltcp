@@ -579,14 +579,14 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
 
     /// Set the source address field.
     #[inline]
-    pub fn set_src_addr(&mut self, value: Address) {
+    pub fn set_src_addr(&mut self, value: &Address) {
         let data = self.buffer.as_mut();
         data[field::SRC_ADDR].copy_from_slice(value.as_bytes())
     }
 
     /// Set the destination address field.
     #[inline]
-    pub fn set_dst_addr(&mut self, value: Address) {
+    pub fn set_dst_addr(&mut self, value: &Address) {
         let data = self.buffer.as_mut();
         data[field::DST_ADDR].copy_from_slice(value.as_bytes())
     }
@@ -687,8 +687,8 @@ impl Repr {
         packet.set_frag_offset(0);
         packet.set_hop_limit(self.hop_limit);
         packet.set_next_header(self.next_header);
-        packet.set_src_addr(self.src_addr);
-        packet.set_dst_addr(self.dst_addr);
+        packet.set_src_addr(&self.src_addr);
+        packet.set_dst_addr(&self.dst_addr);
 
         if checksum_caps.ipv4.tx() {
             packet.fill_checksum();
@@ -842,8 +842,8 @@ mod test {
         packet.set_frag_offset(0x203 * 8);
         packet.set_hop_limit(0x1a);
         packet.set_next_header(Protocol::Icmp);
-        packet.set_src_addr(Address([0x11, 0x12, 0x13, 0x14]));
-        packet.set_dst_addr(Address([0x21, 0x22, 0x23, 0x24]));
+        packet.set_src_addr(&Address([0x11, 0x12, 0x13, 0x14]));
+        packet.set_dst_addr(&Address([0x21, 0x22, 0x23, 0x24]));
         packet.fill_checksum();
         packet.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
         assert_eq!(&*packet.into_inner(), &PACKET_BYTES[..]);

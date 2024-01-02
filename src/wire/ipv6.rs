@@ -755,14 +755,14 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
 
     /// Set the source address field.
     #[inline]
-    pub fn set_src_addr(&mut self, value: Address) {
+    pub fn set_src_addr(&mut self, value: &Address) {
         let data = self.buffer.as_mut();
         data[field::SRC_ADDR].copy_from_slice(value.as_bytes());
     }
 
     /// Set the destination address field.
     #[inline]
-    pub fn set_dst_addr(&mut self, value: Address) {
+    pub fn set_dst_addr(&mut self, value: &Address) {
         let data = self.buffer.as_mut();
         data[field::DST_ADDR].copy_from_slice(value.as_bytes());
     }
@@ -842,8 +842,8 @@ impl Repr {
         packet.set_payload_len(self.payload_len as u16);
         packet.set_hop_limit(self.hop_limit);
         packet.set_next_header(self.next_header);
-        packet.set_src_addr(self.src_addr);
-        packet.set_dst_addr(self.dst_addr);
+        packet.set_src_addr(&self.src_addr);
+        packet.set_dst_addr(&self.dst_addr);
     }
 }
 
@@ -1347,8 +1347,8 @@ mod test {
         packet.set_payload_len(0xc);
         packet.set_next_header(Protocol::Udp);
         packet.set_hop_limit(0xfe);
-        packet.set_src_addr(Address::LINK_LOCAL_ALL_ROUTERS);
-        packet.set_dst_addr(Address::LINK_LOCAL_ALL_NODES);
+        packet.set_src_addr(&Address::LINK_LOCAL_ALL_ROUTERS);
+        packet.set_dst_addr(&Address::LINK_LOCAL_ALL_NODES);
         packet
             .payload_mut()
             .copy_from_slice(&REPR_PAYLOAD_BYTES[..]);

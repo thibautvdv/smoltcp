@@ -354,7 +354,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> NdiscOption<T> {
 
     /// Set the prefix.
     #[inline]
-    pub fn set_prefix(&mut self, addr: Ipv6Address) {
+    pub fn set_prefix(&mut self, addr: &Ipv6Address) {
         let data = self.buffer.as_mut();
         data[field::PREFIX].copy_from_slice(addr.as_bytes());
     }
@@ -548,7 +548,7 @@ impl<'a> Repr<'a> {
                 opt.set_prefix_flags(flags);
                 opt.set_valid_lifetime(valid_lifetime);
                 opt.set_preferred_lifetime(preferred_lifetime);
-                opt.set_prefix(prefix);
+                opt.set_prefix(&prefix);
             }
             Repr::RedirectedHeader(RedirectedHeader { header, data }) => {
                 // TODO(thvdveld): I think we need to check if the data we are sending is not
@@ -673,7 +673,7 @@ mod test {
         opt.set_prefix_flags(PrefixInfoFlags::ON_LINK | PrefixInfoFlags::ADDRCONF);
         opt.set_valid_lifetime(Duration::from_secs(900));
         opt.set_preferred_lifetime(Duration::from_secs(1000));
-        opt.set_prefix(Ipv6Address::new(0xfe80, 0, 0, 0, 0, 0, 0, 1));
+        opt.set_prefix(&Ipv6Address::new(0xfe80, 0, 0, 0, 0, 0, 0, 1));
         assert_eq!(&PREFIX_OPT_BYTES[..], &*opt.into_inner());
     }
 

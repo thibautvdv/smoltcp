@@ -116,12 +116,16 @@ fn test_local_subnet_broadcasts(#[case] medium: Medium) {
 
     assert!(iface
         .inner
-        .is_broadcast_v4(Ipv4Address([255, 255, 255, 255])));
+        .is_broadcast_v4(&Ipv4Address([255, 255, 255, 255])));
     assert!(!iface
         .inner
-        .is_broadcast_v4(Ipv4Address([255, 255, 255, 254])));
-    assert!(iface.inner.is_broadcast_v4(Ipv4Address([192, 168, 1, 255])));
-    assert!(!iface.inner.is_broadcast_v4(Ipv4Address([192, 168, 1, 254])));
+        .is_broadcast_v4(&Ipv4Address([255, 255, 255, 254])));
+    assert!(iface
+        .inner
+        .is_broadcast_v4(&Ipv4Address([192, 168, 1, 255])));
+    assert!(!iface
+        .inner
+        .is_broadcast_v4(&Ipv4Address([192, 168, 1, 254])));
 
     iface.update_ip_addrs(|addrs| {
         addrs.iter_mut().next().map(|addr| {
@@ -130,22 +134,22 @@ fn test_local_subnet_broadcasts(#[case] medium: Medium) {
     });
     assert!(iface
         .inner
-        .is_broadcast_v4(Ipv4Address([255, 255, 255, 255])));
+        .is_broadcast_v4(&Ipv4Address([255, 255, 255, 255])));
     assert!(!iface
         .inner
-        .is_broadcast_v4(Ipv4Address([255, 255, 255, 254])));
+        .is_broadcast_v4(&Ipv4Address([255, 255, 255, 254])));
     assert!(!iface
         .inner
-        .is_broadcast_v4(Ipv4Address([192, 168, 23, 255])));
+        .is_broadcast_v4(&Ipv4Address([192, 168, 23, 255])));
     assert!(!iface
         .inner
-        .is_broadcast_v4(Ipv4Address([192, 168, 23, 254])));
+        .is_broadcast_v4(&Ipv4Address([192, 168, 23, 254])));
     assert!(!iface
         .inner
-        .is_broadcast_v4(Ipv4Address([192, 168, 255, 254])));
+        .is_broadcast_v4(&Ipv4Address([192, 168, 255, 254])));
     assert!(iface
         .inner
-        .is_broadcast_v4(Ipv4Address([192, 168, 255, 255])));
+        .is_broadcast_v4(&Ipv4Address([192, 168, 255, 255])));
 
     iface.update_ip_addrs(|addrs| {
         addrs.iter_mut().next().map(|addr| {
@@ -154,18 +158,18 @@ fn test_local_subnet_broadcasts(#[case] medium: Medium) {
     });
     assert!(iface
         .inner
-        .is_broadcast_v4(Ipv4Address([255, 255, 255, 255])));
+        .is_broadcast_v4(&Ipv4Address([255, 255, 255, 255])));
     assert!(!iface
         .inner
-        .is_broadcast_v4(Ipv4Address([255, 255, 255, 254])));
-    assert!(!iface.inner.is_broadcast_v4(Ipv4Address([192, 23, 1, 255])));
-    assert!(!iface.inner.is_broadcast_v4(Ipv4Address([192, 23, 1, 254])));
+        .is_broadcast_v4(&Ipv4Address([255, 255, 255, 254])));
+    assert!(!iface.inner.is_broadcast_v4(&Ipv4Address([192, 23, 1, 255])));
+    assert!(!iface.inner.is_broadcast_v4(&Ipv4Address([192, 23, 1, 254])));
     assert!(!iface
         .inner
-        .is_broadcast_v4(Ipv4Address([192, 255, 255, 254])));
+        .is_broadcast_v4(&Ipv4Address([192, 255, 255, 254])));
     assert!(iface
         .inner
-        .is_broadcast_v4(Ipv4Address([192, 255, 255, 255])));
+        .is_broadcast_v4(&Ipv4Address([192, 255, 255, 255])));
 }
 
 #[rstest]
@@ -376,8 +380,8 @@ fn test_handle_valid_arp_request(#[case] medium: Medium) {
     };
 
     let mut frame = EthernetFrame::new_unchecked(&mut eth_bytes);
-    frame.set_dst_addr(EthernetAddress::BROADCAST);
-    frame.set_src_addr(remote_hw_addr);
+    frame.set_dst_addr(&EthernetAddress::BROADCAST);
+    frame.set_src_addr(&remote_hw_addr);
     frame.set_ethertype(EthernetProtocol::Arp);
     let mut packet = ArpPacket::new_unchecked(frame.payload_mut());
     repr.emit(&mut packet);
@@ -431,8 +435,8 @@ fn test_handle_other_arp_request(#[case] medium: Medium) {
     };
 
     let mut frame = EthernetFrame::new_unchecked(&mut eth_bytes);
-    frame.set_dst_addr(EthernetAddress::BROADCAST);
-    frame.set_src_addr(remote_hw_addr);
+    frame.set_dst_addr(&EthernetAddress::BROADCAST);
+    frame.set_src_addr(&remote_hw_addr);
     frame.set_ethertype(EthernetProtocol::Arp);
     let mut packet = ArpPacket::new_unchecked(frame.payload_mut());
     repr.emit(&mut packet);
@@ -482,8 +486,8 @@ fn test_arp_flush_after_update_ip(#[case] medium: Medium) {
     };
 
     let mut frame = EthernetFrame::new_unchecked(&mut eth_bytes);
-    frame.set_dst_addr(EthernetAddress::BROADCAST);
-    frame.set_src_addr(remote_hw_addr);
+    frame.set_dst_addr(&EthernetAddress::BROADCAST);
+    frame.set_src_addr(&remote_hw_addr);
     frame.set_ethertype(EthernetProtocol::Arp);
     {
         let mut packet = ArpPacket::new_unchecked(frame.payload_mut());

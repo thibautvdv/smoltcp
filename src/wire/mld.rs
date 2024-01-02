@@ -108,7 +108,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
 
     /// Set the address being queried.
     #[inline]
-    pub fn set_mcast_addr(&mut self, addr: Ipv6Address) {
+    pub fn set_mcast_addr(&mut self, addr: &Ipv6Address) {
         let data = self.buffer.as_mut();
         data[field::QUERY_MCAST_ADDR].copy_from_slice(addr.as_bytes());
     }
@@ -278,7 +278,7 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> AddressRecord<T> {
     /// # Panics
     /// This function panics if the given address is not a multicast address.
     #[inline]
-    pub fn set_mcast_addr(&mut self, addr: Ipv6Address) {
+    pub fn set_mcast_addr(&mut self, addr: &Ipv6Address) {
         assert!(addr.is_multicast());
         let data = self.buffer.as_mut();
         data[field::RECORD_MCAST_ADDR].copy_from_slice(addr.as_bytes());
@@ -364,7 +364,7 @@ impl<'a> Repr<'a> {
                 packet.set_msg_code(0);
                 packet.clear_reserved();
                 packet.set_max_resp_code(*max_resp_code);
-                packet.set_mcast_addr(*mcast_addr);
+                packet.set_mcast_addr(mcast_addr);
                 if *s_flag {
                     packet.set_s_flag();
                 } else {
@@ -465,7 +465,7 @@ mod test {
         packet.set_msg_type(Message::MldQuery);
         packet.set_msg_code(0);
         packet.set_max_resp_code(0x0400);
-        packet.set_mcast_addr(Ipv6Address::LINK_LOCAL_ALL_NODES);
+        packet.set_mcast_addr(&Ipv6Address::LINK_LOCAL_ALL_NODES);
         packet.set_s_flag();
         packet.set_qrv(0x02);
         packet.set_qqic(0x12);
@@ -512,7 +512,7 @@ mod test {
             addr_rcrd.set_record_type(RecordType::ModeIsInclude);
             addr_rcrd.set_aux_data_len(0);
             addr_rcrd.set_num_srcs(1);
-            addr_rcrd.set_mcast_addr(Ipv6Address::LINK_LOCAL_ALL_NODES);
+            addr_rcrd.set_mcast_addr(&Ipv6Address::LINK_LOCAL_ALL_NODES);
             addr_rcrd
                 .payload_mut()
                 .copy_from_slice(Ipv6Address::LINK_LOCAL_ALL_ROUTERS.as_bytes());

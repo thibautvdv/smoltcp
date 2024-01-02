@@ -284,7 +284,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Header<T> {
     ///
     /// # Panics
     /// This function may panic if this header is not the Type 2 Routing Header routing type.
-    pub fn set_home_address(&mut self, value: Address) {
+    pub fn set_home_address(&mut self, value: &Address) {
         let data = self.buffer.as_mut();
         data[field::HOME_ADDRESS].copy_from_slice(value.as_bytes());
     }
@@ -413,7 +413,7 @@ impl<'a> Repr<'a> {
                 header.set_routing_type(Type::Type2);
                 header.set_segments_left(segments_left);
                 header.clear_reserved();
-                header.set_home_address(home_address);
+                header.set_home_address(&home_address);
             }
             Repr::Rpl {
                 segments_left,

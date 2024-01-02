@@ -19,7 +19,7 @@ impl InterfaceInner {
         frag: &'a mut FragmentsBuffer,
     ) -> Option<Packet<'a>> {
         let ipv4_repr = check!(Ipv4Repr::parse(ipv4_packet, &self.caps.checksum));
-        if !self.is_unicast_v4(ipv4_repr.src_addr) && !ipv4_repr.src_addr.is_unspecified() {
+        if !self.is_unicast_v4(&ipv4_repr.src_addr) && !ipv4_repr.src_addr.is_unspecified() {
             // Discard packets with non-unicast source addresses but allow unspecified
             net_debug!("non-unicast or unspecified source address");
             return None;
@@ -104,9 +104,9 @@ impl InterfaceInner {
             }
         }
 
-        if !self.has_ip_addr(ipv4_repr.dst_addr)
-            && !self.has_multicast_group(ipv4_repr.dst_addr)
-            && !self.is_broadcast_v4(ipv4_repr.dst_addr)
+        if !self.has_ipv4_addr(&ipv4_repr.dst_addr)
+            && !self.has_multicast_group_v4(&ipv4_repr.dst_addr)
+            && !self.is_broadcast_v4(&ipv4_repr.dst_addr)
         {
             // Ignore IP packets not directed at us, or broadcast, or any of the multicast groups.
             // If AnyIP is enabled, also check if the packet is routed locally.
@@ -115,7 +115,11 @@ impl InterfaceInner {
                 || self
                     .routes
                     .lookup(&IpAddress::Ipv4(ipv4_repr.dst_addr), self.now)
-                    .map_or(true, |router_addr| !self.has_ip_addr(router_addr))
+                    .map_or(true, |router_addr| match router_addr {
+                        IpAddress::Ipv4(a) => !self.has_ipv4_addr(&a),
+                        #[cfg(feature = "proto-ipv6")]
+                        IpAddress::Ipv6(a) => !self.has_ipv6_addr(&a),
+                    })
             {
                 return None;
             }
@@ -185,7 +189,7 @@ impl InterfaceInner {
                 ..
             } => {
                 // Only process ARP packets for us.
-                if !self.has_ip_addr(target_protocol_addr) {
+                if !self.has_ipv4_addr(&target_protocol_addr) {
                     return None;
                 }
 
@@ -294,10 +298,10 @@ impl InterfaceInner {
         ipv4_repr: Ipv4Repr,
         icmp_repr: Icmpv4Repr<'icmp>,
     ) -> Option<Packet<'frame>> {
-        if !self.is_unicast_v4(ipv4_repr.src_addr) {
+        if !self.is_unicast_v4(&ipv4_repr.src_addr) {
             // Do not send ICMP replies to non-unicast sources
             None
-        } else if self.is_unicast_v4(ipv4_repr.dst_addr) {
+        } else if self.is_unicast_v4(&ipv4_repr.dst_addr) {
             // Reply as normal when src_addr and dst_addr are both unicast
             let ipv4_reply_repr = Ipv4Repr {
                 src_addr: ipv4_repr.dst_addr,
@@ -310,7 +314,7 @@ impl InterfaceInner {
                 ipv4_reply_repr,
                 IpPayload::Icmpv4(icmp_repr),
             ))
-        } else if self.is_broadcast_v4(ipv4_repr.dst_addr) {
+        } else if self.is_broadcast_v4(&ipv4_repr.dst_addr) {
             // Only reply to broadcasts for echo replies and not other ICMP messages
             match icmp_repr {
                 Icmpv4Repr::EchoReply { .. } => match self.ipv4_addr() {
@@ -360,8 +364,8 @@ impl InterfaceInner {
             let mut frame = EthernetFrame::new_unchecked(tx_buffer);
 
             let src_addr = self.hardware_addr.ethernet_or_panic();
-            frame.set_src_addr(src_addr);
-            frame.set_dst_addr(frag.ipv4.dst_hardware_addr);
+            frame.set_src_addr(&src_addr);
+            frame.set_dst_addr(&frag.ipv4.dst_hardware_addr);
 
             match repr.version() {
                 #[cfg(feature = "proto-ipv4")]

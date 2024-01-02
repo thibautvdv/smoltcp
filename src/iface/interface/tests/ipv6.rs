@@ -702,8 +702,8 @@ fn test_handle_valid_ndisc_request(#[case] medium: Medium) {
     });
 
     let mut frame = EthernetFrame::new_unchecked(&mut eth_bytes);
-    frame.set_dst_addr(EthernetAddress([0x33, 0x33, 0x00, 0x00, 0x00, 0x00]));
-    frame.set_src_addr(remote_hw_addr);
+    frame.set_dst_addr(&EthernetAddress([0x33, 0x33, 0x00, 0x00, 0x00, 0x00]));
+    frame.set_src_addr(&remote_hw_addr);
     frame.set_ethertype(EthernetProtocol::Ipv6);
     ip_repr.emit(frame.payload_mut(), &ChecksumCapabilities::default());
     solicit.emit(
@@ -778,13 +778,13 @@ fn test_solicited_node_addrs(#[case] medium: Medium) {
     });
     assert!(iface
         .inner
-        .has_solicited_node(Ipv6Address::new(0xff02, 0, 0, 0, 0, 1, 0xff00, 0x0002)));
+        .has_solicited_node(&Ipv6Address::new(0xff02, 0, 0, 0, 0, 1, 0xff00, 0x0002)));
     assert!(iface
         .inner
-        .has_solicited_node(Ipv6Address::new(0xff02, 0, 0, 0, 0, 1, 0xff00, 0xffff)));
+        .has_solicited_node(&Ipv6Address::new(0xff02, 0, 0, 0, 0, 1, 0xff00, 0xffff)));
     assert!(!iface
         .inner
-        .has_solicited_node(Ipv6Address::new(0xff02, 0, 0, 0, 0, 1, 0xff00, 0x0003)));
+        .has_solicited_node(&Ipv6Address::new(0xff02, 0, 0, 0, 0, 1, 0xff00, 0x0003)));
 }
 
 #[rstest]
