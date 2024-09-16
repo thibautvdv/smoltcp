@@ -1,4 +1,5 @@
-#![allow(clippy::option_map_unit_fn)]
+#![allow(dead_code, unused, clippy::option_map_unit_fn)]
+
 mod utils;
 
 use log::*;

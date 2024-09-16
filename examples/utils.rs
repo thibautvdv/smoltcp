@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused)]
 
 #[cfg(feature = "log")]
 use env_logger::Builder;
