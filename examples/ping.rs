@@ -56,6 +56,12 @@ macro_rules! get_icmp_pong {
     }};
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn main() {
+    panic!("This example only works on Linux or Android (with tun/tap support)");
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn main() {
     utils::setup_logging("warn");
 

@@ -8,6 +8,12 @@ use smoltcp::time::Instant;
 use smoltcp::wire::{DnsQueryType, EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv6Address};
 use std::os::unix::io::AsRawFd;
 
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn main() {
+    panic!("This example only works on Linux or Android (with tun/tap support)");
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn main() {
     utils::setup_logging("warn");
 
