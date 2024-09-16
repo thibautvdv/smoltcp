@@ -1,4 +1,5 @@
-#![allow(clippy::option_map_unit_fn)]
+#![allow(dead_code, unused, clippy::option_map_unit_fn)]
+
 mod utils;
 
 use log::*;
@@ -13,6 +14,12 @@ use smoltcp::{
     time::Duration,
 };
 
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn main() {
+    panic!("This example only works on Linux or Android (with tun/tap support)");
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn main() {
     #[cfg(feature = "log")]
     utils::setup_logging("");

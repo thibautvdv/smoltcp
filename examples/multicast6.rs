@@ -1,3 +1,5 @@
+#![allow(dead_code, unused)]
+
 mod utils;
 
 use std::os::unix::io::AsRawFd;
@@ -23,6 +25,12 @@ const GROUP: [u16; 8] = [0xff02, 0, 0, 0, 0, 0, 0, 0x1234];
 const LOCAL_ADDR: [u16; 8] = [0xfe80, 0, 0, 0, 0, 0, 0, 0x101];
 const ROUTER_ADDR: [u16; 8] = [0xfe80, 0, 0, 0, 0, 0, 0, 0x100];
 
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn main() {
+    panic!("This example only works on Linux or Android (with tun/tap support)");
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn main() {
     utils::setup_logging("warn");
 

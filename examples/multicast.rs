@@ -1,3 +1,5 @@
+#![allow(dead_code, unused)]
+
 mod utils;
 
 use std::os::unix::io::AsRawFd;
@@ -14,6 +16,12 @@ use smoltcp::wire::{
 const MDNS_PORT: u16 = 5353;
 const MDNS_GROUP: [u8; 4] = [224, 0, 0, 251];
 
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn main() {
+    panic!("This example only works on Linux or Android (with tun/tap support)");
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn main() {
     utils::setup_logging("warn");
 
