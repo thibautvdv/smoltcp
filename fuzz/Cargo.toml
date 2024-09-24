@@ -19,31 +19,31 @@ smoltcp = { path = ".." }
 members = ["."]
 
 [[bin]]
-name = "packet_parser"
-path = "fuzz_targets/packet_parser.rs"
+name = "ipv4-packet-parser"
+path = "fuzz_targets/ipv4-packet-parser.rs"
 test = false
 doc = false
 
 [[bin]]
-name = "tcp_headers"
-path = "fuzz_targets/tcp_headers.rs"
+name = "ipv6-packet-parser"
+path = "fuzz_targets/ipv6-packet-parser.rs"
 test = false
 doc = false
 
 [[bin]]
-name = "dhcp_header"
-path = "fuzz_targets/dhcp_header.rs"
+name = "ieee802154-frame-parser"
+path = "fuzz_targets/ieee802154-frame-parser.rs"
 test = false
 doc = false
 
 [[bin]]
-name = "ieee802154_header"
-path = "fuzz_targets/ieee802154_header.rs"
+name = "ethernet-frame-parser"
+path = "fuzz_targets/ethernet-frame-parser.rs"
 test = false
 doc = false
 
 [[bin]]
-name = "sixlowpan_packet"
-path = "fuzz_targets/sixlowpan_packet.rs"
+name = "sixlowpan-parser"
+path = "fuzz_targets/sixlowpan-parser.rs"
 test = false
 doc = false
